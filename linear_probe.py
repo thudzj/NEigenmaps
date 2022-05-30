@@ -50,6 +50,11 @@ def main():
     args = parser.parse_args()
     args.ngpus_per_node = torch.cuda.device_count()
 
+    if os.path.exists('/data/LargeData/Large/ImageNet'):
+        args.path = Path('/data/LargeData/Large/ImageNet')
+    elif os.path.exists('/home/LargeData/Large/ImageNet'):
+        args.path = Path('/home/LargeData/Large/ImageNet')
+
     # single-node distributed training
     args.rank = 0
     args.dist_url = f'tcp://localhost:{random.randrange(49152, 65535)}'

@@ -1,0 +1,7 @@
+NCCL_SOCKET_IFNAME=enp33s0f1 python main.py --dist-url tcp://172.18.1.75 --world-size 2 --rank 0 --checkpoint-dir ../logs  --batch-size 3584
+NCCL_SOCKET_IFNAME=enp33s0f1 python main.py --dist-url tcp://172.18.1.75 --world-size 2 --rank 1 --checkpoint-dir ../logs  --batch-size 3584
+
+
+
+NCCL_SOCKET_IFNAME=enp33s0f1 python main.py --dist-url tcp://172.18.1.75 --world-size 2 --rank 0 --checkpoint-dir ../logs  --batch-size 3584 --mode neuralef-proj --name neuralef-proj --max_grad_norm 10
+NCCL_SOCKET_IFNAME=enp33s0f1 python main.py --dist-url tcp://172.18.1.75 --world-size 2 --rank 1 --checkpoint-dir ../logs  --batch-size 3584 --mode neuralef-proj --name neuralef-proj --max_grad_norm 10
