@@ -20,7 +20,7 @@ import torch
 import torchvision
 
 parser = argparse.ArgumentParser(description='Evaluate resnet50 features on ImageNet')
-parser.add_argument('--data', type=Path, metavar='DIR',
+parser.add_argument('--data', type=str, metavar='DIR',
                     help='path to dataset')
 parser.add_argument('--pretrained', type=Path, metavar='FILE',
                     help='path to pretrained model')
@@ -48,12 +48,16 @@ parser.add_argument('--print-freq', default=100, type=int, metavar='N',
 
 def main():
     args = parser.parse_args()
+    if args.train_percent in {1, 10}:
+        args.train_files = urllib.request.urlopen(f'https://raw.githubusercontent.com/google-research/simclr/master/imagenet_subsets/{args.train_percent}percent.txt').readlines()
     args.ngpus_per_node = torch.cuda.device_count()
 
     if os.path.exists('/data/LargeData/Large/ImageNet'):
-        args.path = Path('/data/LargeData/Large/ImageNet')
+        args.data = '/data/LargeData/Large/ImageNet'
     elif os.path.exists('/home/LargeData/Large/ImageNet'):
-        args.path = Path('/home/LargeData/Large/ImageNet')
+        args.data = '/home/LargeData/Large/ImageNet'
+    elif os.path.exists('/workspace/home/zhijie/ImageNet'):
+        args.data = '/workspace/home/zhijie/ImageNet'
 
     # single-node distributed training
     args.rank = 0
@@ -103,8 +107,8 @@ def main_worker(gpu, args):
     best_acc = argparse.Namespace(top1=0, top5=0)
 
     # Data loading code
-    traindir = args.data / 'train'
-    valdir = args.data / 'val'
+    traindir = os.path.join(args.data, 'train')
+    valdir = os.path.join(args.data, 'val')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
@@ -160,6 +164,8 @@ def main_worker(gpu, args):
                                  lr_classifier=lr_classifier, loss=loss.item(),
                                  time=int(time.time() - start_time))
                     print(json.dumps(stats))
+
+        scheduler.step()
 
         # evaluate
         model.eval()

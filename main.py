@@ -21,9 +21,8 @@ import math
 import torch
 import torchvision
 from torch import nn
+import torch.nn.functional as F
 from utils import *
-
-
 
 parser = argparse.ArgumentParser(description='DirectCLR Training')
 parser.add_argument('--data', type=str, metavar='DIR',
@@ -46,16 +45,20 @@ parser.add_argument('--dim', default=360, type=int,
                     help="dimension of subvector sent to infoNCE")
 parser.add_argument('--mode', type=str, default="baseline",
                     choices=["baseline", "simclr", "directclr", "single",
-                             "neuralef", "neuralef-1lproj", "neuralef-proj"],
+                             "neuralef"],
                     help="project type")
 parser.add_argument('--name', type=str, default='default')
 parser.add_argument('--resume', type=str, default=None)
 
-parser.add_argument('--riemannian_projection', default=False, action='store_true')
-parser.add_argument('--neuralef_unloaded', default=False, action='store_true')
+# parser.add_argument('--riemannian_projection', default=False, action='store_true')
+# parser.add_argument('--neuralef_unloaded', default=False, action='store_true')
 parser.add_argument('--max_grad_norm', default=None, type=float)
 parser.add_argument('--kernel', default=0, type=int)
-
+parser.add_argument('--opt', default='default', type=str)
+parser.add_argument('--alpha', default=1, type=float)
+parser.add_argument('--proj_dim', default=[2048, 128], type=int, nargs='+')
+parser.add_argument('--proj_bn', default=False, action='store_true')
+parser.add_argument('--t', default=1, type=float)
 
 # Dist
 parser.add_argument('--world-size', default=1, type=int,
@@ -105,17 +108,24 @@ def main_worker(gpu, args):
     torch.cuda.set_device(gpu)
     torch.backends.cudnn.benchmark = True
 
-    if 'neuralef' in args.mode:
+    if args.mode == 'neuralef':
         model = NeuralEFCLR(args).cuda(gpu)
     else:
         model = directCLR(args).cuda(gpu)
     model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[gpu])
 
-    optimizer = LARS(model.parameters(),
-                    lr=0, weight_decay=args.weight_decay,
-                    weight_decay_filter=exclude_bias_and_norm,
-                    lars_adaptation_filter=exclude_bias_and_norm)
+    if args.opt == 'default':
+        optimizer = LARS(model.parameters(),
+                        lr=0, weight_decay=args.weight_decay,
+                        weight_decay_filter=exclude_bias_and_norm,
+                        lars_adaptation_filter=exclude_bias_and_norm)
+    else:
+        from timm.optim.optim_factory import create_optimizer_v2
+        optimizer = create_optimizer_v2(model, opt=args.opt, lr=0,
+                                        weight_decay=args.weight_decay,
+                                        momentum=0.9,
+                                        filter_bias_and_bn=True)
 
     # automatically resume from checkpoint if it exists
     if args.resume is not None:
@@ -152,7 +162,7 @@ def main_worker(gpu, args):
             optimizer.zero_grad()
             with torch.cuda.amp.autocast():
                 loss, reg, cls_loss, acc = model.forward(y1, y2, labels)
-                scaler.scale(loss + reg * 5 + cls_loss).backward()
+                scaler.scale(loss + reg + cls_loss).backward()
                 if args.max_grad_norm is not None:
                     scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
@@ -162,9 +172,10 @@ def main_worker(gpu, args):
             if step % args.print_freq == 0:
                 torch.distributed.reduce(acc.div_(args.world_size), 0)
                 if args.rank == 0:
-                    print(f'epoch={epoch}, step={step}, loss={loss.item():.4f},'
-                          f' reg={reg.item():.4f}, cls_loss={cls_loss.item():.4f}'
-                          f' acc={acc.item():.4f}, learning_rate={lr}')
+                    print(f'epoch={epoch}, step={step}, loss={loss.item():.6f},'
+                          f' reg={reg.item():.6f}, cls_loss={cls_loss.item():.4f}'
+                          f' acc={acc.item():.4f}, learning_rate={lr:.4f},'
+                          f' t={F.softplus(model.module.logit_t).item():.4f}')
                     stats = dict(epoch=epoch, step=step, learning_rate=lr,
                                  loss=loss.item(), reg=reg.item(),
                                  cls_loss=cls_loss.item(), acc=acc.item(),
@@ -225,21 +236,21 @@ class directCLR(nn.Module):
         loss = infoNCE(z1, z2) / 2 + infoNCE(z2, z1) / 2
 
         logits = self.online_head(r1.detach())
-        cls_loss = torch.nn.functional.cross_entropy(logits, labels)
+        cls_loss = F.cross_entropy(logits, labels)
         acc = torch.sum(torch.eq(torch.argmax(logits, dim=1), labels)) / logits.size(0)
         return loss, torch.zeros_like(loss), cls_loss, acc
 
 
 def infoNCE(nn, p, temperature=0.1):
-    nn = torch.nn.functional.normalize(nn, dim=1)
-    p = torch.nn.functional.normalize(p, dim=1)
+    nn = F.normalize(nn, dim=1)
+    p = F.normalize(p, dim=1)
     nn = gather_from_all(nn)
     p = gather_from_all(p)
     logits = nn @ p.T
     logits /= temperature
     n = p.shape[0]
     labels = torch.arange(0, n, dtype=torch.long).cuda()
-    loss = torch.nn.functional.cross_entropy(logits, labels)
+    loss = F.cross_entropy(logits, labels)
     return loss
 
 class NeuralEFCLR(nn.Module):
@@ -251,55 +262,36 @@ class NeuralEFCLR(nn.Module):
 
         self.online_head = nn.Linear(2048, 1000)
 
-        if self.args.mode == "neuralef-proj":
-            sizes = [2048, 2048, 128]
-            layers = []
-            for i in range(len(sizes) - 2):
-                layers.append(nn.Linear(sizes[i], sizes[i + 1], bias=False))
-                # layers.append(nn.BatchNorm1d(sizes[i+1]))
-                layers.append(nn.ReLU(inplace=True))
-            layers.append(nn.Linear(sizes[-2], sizes[-1], bias=False))
-            # layers.append(nn.BatchNorm1d(sizes[-1]))
-            self.projector = nn.Sequential(*layers)
-        elif self.args.mode == "neuralef-1lproj":
-            self.projector = nn.Linear(2048, 128, bias=False)
-        else:
+        if args.proj_dim[0] == 0:
             self.projector = nn.Identity()
+        else:
+            if len(args.proj_dim) > 1:
+                sizes = [2048,] + args.proj_dim
+                layers = []
+                for i in range(len(sizes) - 2):
+                    layers.append(nn.Linear(sizes[i], sizes[i + 1], bias=False))
+                    if args.proj_bn:
+                        layers.append(nn.BatchNorm1d(sizes[i+1]))
+                    layers.append(nn.ReLU(inplace=True))
+                layers.append(nn.Linear(sizes[-2], sizes[-1], bias=True))
+                # if args.proj_bn:
+                #     layers.append(nn.BatchNorm1d(sizes[-1]))
+                self.projector = nn.Sequential(*layers)
+            elif len(args.proj_dim) == 1:
+                self.projector = nn.Linear(2048, args.proj_dim[0], bias=True)
+            else:
+                self.projector = nn.Identity()
+        if self.args.kernel == 4:
+            self.logit_t = nn.Parameter(torch.tensor([args.t]).exp().div(1).log(), requires_grad=True)
+        else:
+            self.register_buffer('logit_t', torch.tensor([args.t]).exp().sub(1).log())
 
-
-        # '''
-        # when multiplier=2, the sim_matrix is like
-        #         x_1  x_2  x_3  x_4 x'_1 x'_2 x'_3 x'_4
-        # x_1  |    1    0    0    0    1    0    0    0
-        # x_2  |    0    1    0    0    0    1    0    0
-        # x_3  |    0    0    1    0    0    0    1    0
-        # x_4  |    0    0    0    1    0    0    0    1
-        # x'_1 |    1    0    0    0    1    0    0    0
-        # x'_2 |    0    1    0    0    0    1    0    0
-        # x'_3 |    0    0    1    0    0    0    1    0
-        # x'_4 |    0    0    0    1    0    0    0    1
-        # '''
-        # A = torch.tile(torch.eye(self.args.batch_size * args.world_size), (2, 2))
-        #
-        # print("the similarity matrix is like:")
-        # print(torch.tile(torch.eye(4), (2, 2)))
-        #
-        # D = A.sum(-1).diag()
-        # # L = D - A
-        # # L_normalized = D.inverse().sqrt() @ L @ D.inverse().sqrt()
-        #
-        # self.K = D.inverse().sqrt() @ A @ D.inverse().sqrt() #L_normalized
+        if args.rank == 0:
+            print(self.projector)
 
     def forward(self, y1, y2, labels):
-        # if self.args.rank == 0:
-        #     print(y1[:2, :2])
-        #     print(y2[:2, :2])
-
         r1 = self.backbone(y1)
         r2 = self.backbone(y2)
-
-        # if self.args.rank == 0:
-        #     print(r1[:6, :6])
 
         z1 = self.projector(r1)
         z2 = self.projector(r2)
@@ -307,92 +299,59 @@ class NeuralEFCLR(nn.Module):
         psi1 = gather_from_all(z1)
         psi2 = gather_from_all(z2)
 
-        if 0:
-            norm1_ = (psi1.norm(dim=0) ** 2).div(psi1.shape[0]).sqrt().clamp(min=1e-4)
-            norm2_ = (psi2.norm(dim=0) ** 2).div(psi2.shape[0]).sqrt().clamp(min=1e-4)
+        B = psi1.shape[0] + psi2.shape[0]
+        norm_ = (psi1.norm(dim=0) ** 2 + psi2.norm(dim=0) ** 2).div(B).sqrt().clamp(min=1e-6)
 
-            psi1, psi2 = psi1.div(norm1_), psi2.div(norm2_)
 
-            psi_K_psi_diag = (psi1 * psi2).sum(0).view(-1, 1)
-            psi2_d_K_psi1 = psi2.detach().T @ psi1
-            psi1_d_K_psi2 = psi1.detach().T @ psi2
+        psi1, psi2 = psi1.div(norm_), psi2.div(norm_)
 
-            loss = - psi_K_psi_diag.sum() * 2 / psi1.shape[0] * psi2.shape[0]
+        if self.args.kernel == 0:
+            K_psi = torch.cat([psi2 - psi1, psi1 - psi2])
+        elif self.args.kernel == 1:
+            '''
+            K:
+                    x_1   x_2   x_3   x_4  x'_1  x'_2  x'_3  x'_4
+            x_1  | -1/8  -1/8  -1/8  -1/8 1-1/8  -1/8  -1/8  -1/8
+            x_2  | -1/8  -1/8  -1/8  -1/8  -1/8 1-1/8  -1/8  -1/8
+            x_3  | -1/8  -1/8  -1/8  -1/8  -1/8  -1/8 1-1/8  -1/8
+            x_4  | -1/8  -1/8  -1/8  -1/8  -1/8  -1/8  -1/8 1-1/8
+            x'_1 |1-1/8  -1/8  -1/8  -1/8  -1/8  -1/8  -1/8  -1/8
+            x'_2 | -1/8 1-1/8  -1/8  -1/8  -1/8  -1/8  -1/8  -1/8
+            x'_3 | -1/8  -1/8 1-1/8  -1/8  -1/8  -1/8  -1/8  -1/8
+            x'_4 | -1/8  -1/8  -1/8 1-1/8  -1/8  -1/8  -1/8  -1/8
+            '''
+            K_psi = torch.cat([psi2, psi1]) - (psi1.sum(0) + psi2.sum(0)) / B
+        elif self.args.kernel == 2:
+            K_psi = torch.cat([psi1 - psi2, psi2 - psi1])
+        elif self.args.kernel == 3:
+            '''
+            K:
+                    x_1   x_2   x_3   x_4  x'_1  x'_2  x'_3  x'_4
+            x_1  |1-1/8  -1/8  -1/8  -1/8 1-1/8  -1/8  -1/8  -1/8
+            x_2  | -1/8 1-1/8  -1/8  -1/8  -1/8 1-1/8  -1/8  -1/8
+            x_3  | -1/8  -1/8 1-1/8  -1/8  -1/8  -1/8 1-1/8  -1/8
+            x_4  | -1/8  -1/8  -1/8 1-1/8  -1/8  -1/8  -1/8 1-1/8
+            x'_1 |1-1/8  -1/8  -1/8  -1/8 1-1/8  -1/8  -1/8  -1/8
+            x'_2 | -1/8 1-1/8  -1/8  -1/8  -1/8 1-1/8  -1/8  -1/8
+            x'_3 | -1/8  -1/8 1-1/8  -1/8  -1/8  -1/8 1-1/8  -1/8
+            x'_4 | -1/8  -1/8  -1/8 1-1/8  -1/8  -1/8  -1/8 1-1/8
+            '''
+            K_psi = torch.cat([psi1 + psi2, psi2 + psi1]) - (psi1.sum(0) + psi2.sum(0)) / B
+        elif self.args.kernel == 4:
+            tmp = torch.tensor([[1., -1.], [-1., 1.]], device=self.logit_t.device)
+            heat_kernel = torch.matrix_exp(-1 * F.softplus(-self.logit_t + (self.logit_t*2).detach()) * tmp)
+            K_psi = torch.cat([psi1 * heat_kernel[0, 0] + psi2 * heat_kernel[0, 1],
+                               psi1 * heat_kernel[0, 1] + psi2 * heat_kernel[0, 0]])
 
-            #/ psi_K_psi_diag.detach()
-            reg = (psi2_d_K_psi1 ** 2).triu(1).sum() \
-                + (psi1_d_K_psi2 ** 2).triu(1).sum()
-            reg /= psi1.shape[0] * psi2.shape[0]
-        else:
-            B = psi1.shape[0] + psi2.shape[0]
-            norm_ = (psi1.norm(dim=0) ** 2 + psi2.norm(dim=0) ** 2).div(B).sqrt().clamp(min=1e-4)
+        psi_K_psi_diag = (torch.cat([psi1, psi2]) * K_psi).sum(0).view(-1, 1)
+        psi_d_K_psi = torch.cat([psi1, psi2]).detach().T @ K_psi
 
-            psi1, psi2 = psi1.div(norm_), psi2.div(norm_)
-
-            if self.args.kernel == 0:
-                K_psi = torch.cat([psi2 - psi1, psi1 - psi2])
-            elif self.args.kernel == 1:
-                K_psi = torch.cat([psi2, psi1]) - (psi1.sum(0) + psi2.sum(0)) / B
-            elif self.args.kernel == 2:
-                K_psi = torch.cat([psi1 - psi2, psi2 - psi1])
-            elif self.args.kernel == 3:
-                K_psi = torch.cat([psi1 + psi2, psi2 + psi1])
-
-            psi_K_psi_diag = (torch.cat([psi1, psi2]) * K_psi).sum(0).view(-1, 1)
-            psi_d_K_psi = torch.cat([psi1, psi2]).detach().T @ K_psi
-
-            loss = - psi_K_psi_diag.sum()# / (B ** 2)
-
-            reg = (psi_d_K_psi ** 2 / psi_K_psi_diag.detach().abs()).triu(1).sum() #
-            # reg /= B ** 2
-
-        # # estimate the neuralef grad
-        # with torch.no_grad():
-        #     # K = torch.tile(torch.eye(z1.shape[0]), (2, 2))
-        #     # D = A.sum(-1).diag()
-        #     # L = D - A
-        #     # L_normalized = D.inverse().sqrt() @ L @ D.inverse().sqrt()
-        #
-        #     # self.K = D.inverse().sqrt() @ A @ D.inverse().sqrt()
-        #
-        #     # K_psi = K @ psi
-        #     # if self.args.rank == 0:
-        #     #     print(psi[:3, :3])
-        #     with torch.cuda.amp.autocast(False):
-        #         psi1_f, psi2_f = psi1.float(), psi2.float()
-        #         K_psi2 = psi2_f
-        #         psi1_K_psi2 = psi1_f.T @ K_psi
-        #         if self.args.neuralef_unloaded:
-        #             grad = K_psi - psi.float() @ psi_K_psi.tril(diagonal=-1).T / z.shape[0] # not sure, to check
-        #         else:
-        #             mask = torch.eye(z.shape[1], device=z.device) - \
-        #                 (psi_K_psi / psi_K_psi.diag().clamp(min=1e-6)).tril(diagonal=-1).T
-        #             grad = K_psi @ mask
-        #
-        #         # the trick in eigengame paper
-        #         if self.args.riemannian_projection:
-        #             grad.sub_((psi.float()*grad).sum(0) * psi.float() / z.shape[0])
-        #
-        #         # the scaling may be unnecessary
-        #         grad *= - 1 #2 / z.shape[0]**2
-        #
-        #         # if self.args.max_grad_norm is not None:
-        #         #     clip_coef = self.args.max_grad_norm / grad.norm(dim=0).clamp(min=1e-6)
-        #         #     grad.mul_(clip_coef)
-        #
-        #         # grad = grad.type_as(psi)
-        #
-        #         # if self.args.rank == 0:
-        #         #     print(grad[:10, :10], torch.isnan(grad).float().sum())
-        #
-        #         # it is a pseudo loss whose gradient w.r.t. psi is the `grad'
-        #         loss = (psi.float() * grad).sum()
+        loss = - psi_K_psi_diag.sum() / (B ** 2) * self.args.alpha
+        reg = (psi_d_K_psi ** 2 / psi_K_psi_diag.detach().abs().clamp_(min=1e-6)).triu(1).sum() / (B ** 2) * self.args.alpha
 
         logits = self.online_head(r1.detach())
-        cls_loss = torch.nn.functional.cross_entropy(logits, labels)
+        cls_loss = F.cross_entropy(logits, labels)
         acc = torch.sum(torch.eq(torch.argmax(logits, dim=1), labels)) / logits.size(0)
-
-        # loss = loss.div((loss / cls_loss).detach()) + cls_loss
         return loss, reg, cls_loss, acc
 
 if __name__ == '__main__':

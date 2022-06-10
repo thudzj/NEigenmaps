@@ -101,6 +101,87 @@ class LARS(optim.Optimizer):
 def exclude_bias_and_norm(p):
     return p.ndim == 1
 
+class LARS2(optim.Optimizer):
+    """
+    Layer-wise Adaptive Rate Scaling for large batch training.
+    Introduced by "Large Batch Training of Convolutional Networks" by Y. You,
+    I. Gitman, and B. Ginsburg. (https://arxiv.org/abs/1708.03888)
+    """
+
+    def __init__(
+        self,
+        params,
+        lr,
+        momentum=0.9,
+        use_nesterov=False,
+        weight_decay=0.0,
+        eta=0.001,
+        weight_decay_filter=None,
+        lars_adaptation_filter=None
+    ):
+        defaults = dict(
+            lr=lr,
+            momentum=momentum,
+            use_nesterov=use_nesterov,
+            weight_decay=weight_decay,
+            weight_decay_filter=weight_decay_filter,
+            lars_adaptation_filter=lars_adaptation_filter,
+            eta=eta,
+        )
+        super(LARS2, self).__init__(params, defaults)
+
+    def step(self):
+        for group in self.param_groups:
+            weight_decay = group["weight_decay"]
+            momentum = group["momentum"]
+            eta = group["eta"]
+            lr = group["lr"]
+            use_nesterov = group["use_nesterov"]
+
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+
+                param = p.data
+                grad = p.grad.data
+
+                param_state = self.state[p]
+
+                if group['weight_decay_filter'] is None or not group['weight_decay_filter'](param):
+                    grad = grad.add(param, alpha=weight_decay)
+
+                trust_ratio = 1.0
+
+                if group['lars_adaptation_filter'] is None or not group['lars_adaptation_filter'](param):
+                    w_norm = torch.norm(param)
+                    g_norm = torch.norm(grad)
+
+                    device = g_norm.get_device()
+                    trust_ratio = torch.where(
+                        w_norm.ge(0),
+                        torch.where(
+                            g_norm.ge(0),
+                            (eta * w_norm / g_norm),
+                            torch.Tensor([1.0]).to(device),
+                        ),
+                        torch.Tensor([1.0]).to(device),
+                    ).item()
+
+                scaled_lr = lr * trust_ratio
+                if "momentum_buffer" not in param_state:
+                    next_v = param_state["momentum_buffer"] = torch.zeros_like(
+                        p.data
+                    )
+                else:
+                    next_v = param_state["momentum_buffer"]
+
+                next_v.mul_(momentum).add_(grad, alpha=scaled_lr)
+                if use_nesterov:
+                    update = (momentum * next_v) + (scaled_lr * grad)
+                else:
+                    update = next_v
+                p.data.add_(-update)
+
 
 class GaussianBlur(object):
     def __init__(self, p):
@@ -178,7 +259,7 @@ def adjust_learning_rate(args, optimizer, loader, step):
         q = 0.5 * (1 + math.cos(math.pi * step / max_steps))
         end_lr = base_lr * 0.001
         lr = base_lr * q + end_lr * (1 - q)
-    
+
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     return lr

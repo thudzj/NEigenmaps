@@ -1,7 +1,8 @@
-NCCL_SOCKET_IFNAME=enp33s0f1 python main.py --dist-url tcp://172.18.1.75 --world-size 2 --rank 0 --checkpoint-dir ../logs  --batch-size 3584
-NCCL_SOCKET_IFNAME=enp33s0f1 python main.py --dist-url tcp://172.18.1.75 --world-size 2 --rank 1 --checkpoint-dir ../logs  --batch-size 3584
+NCCL_SOCKET_IFNAME=enp33s0f1 python main.py --dist-url tcp://172.18.1.76 --world-size 2 --rank 0 --checkpoint-dir ../logs  --batch-size 3840 --name neuralef-2048_128-alpha25 --dist-port 8872 --mode neuralef --kernel 1 --opt lars --learning-rate 4.5 --alpha 25
+    python linear_probe.py --pretrained ../logs/neuralef-2048_128-alpha25/final.pth
 
 
 
-NCCL_SOCKET_IFNAME=enp33s0f1 python main.py --dist-url tcp://172.18.1.75 --world-size 2 --rank 0 --checkpoint-dir ../logs  --batch-size 3584 --mode neuralef-proj --name neuralef-proj --max_grad_norm 10
-NCCL_SOCKET_IFNAME=enp33s0f1 python main.py --dist-url tcp://172.18.1.75 --world-size 2 --rank 1 --checkpoint-dir ../logs  --batch-size 3584 --mode neuralef-proj --name neuralef-proj --max_grad_norm 10
+
+
+NCCL_SOCKET_IFNAME=enp33s0f1 python main.py --dist-url tcp://172.18.1.76 --world-size 2 --rank 0 --checkpoint-dir ../logs  --batch-size 3840 --name tmp --dist-port 8872 --mode neuralef --kernel 3 --opt adamw --learning-rate 0.0225 --alpha 1 --proj_dim 2048 128 --proj_bn
