@@ -22,6 +22,9 @@ import torch
 import torchvision
 from torch import nn
 import torch.nn.functional as F
+
+from torch.utils.tensorboard import SummaryWriter
+
 from utils import *
 
 parser = argparse.ArgumentParser(description='DirectCLR Training')
@@ -41,6 +44,8 @@ parser.add_argument('--print-freq', default=10, type=int, metavar='N',
                     help='print frequency')
 parser.add_argument('--checkpoint-dir', type=str, default='./logs/',
                     metavar='DIR', help='path to checkpoint directory')
+parser.add_argument('--log-dir', type=str, default='./logs/',
+                    metavar='DIR', help='path to log directory')
 parser.add_argument('--dim', default=360, type=int,
                     help="dimension of subvector sent to infoNCE")
 parser.add_argument('--mode', type=str, default="baseline",
@@ -98,6 +103,7 @@ def main_worker(gpu, args):
         world_size=args.world_size, rank=args.rank)
 
     args.checkpoint_dir = os.path.join(args.checkpoint_dir, args.name)
+    args.log_dir = os.path.join(args.log_dir, args.name)
     if args.rank == 0:
         if not os.path.exists(args.checkpoint_dir):
             os.makedirs(args.checkpoint_dir)
@@ -149,6 +155,11 @@ def main_worker(gpu, args):
         dataset, batch_size=per_device_batch_size, num_workers=args.workers,
         pin_memory=True, sampler=sampler)
 
+    if args.rank == 0:
+        writer = SummaryWriter(log_dir = args.log_dir)
+    else:
+        writer = None
+
     start_time = time.time()
     scaler = torch.cuda.amp.GradScaler()
 
@@ -162,7 +173,7 @@ def main_worker(gpu, args):
             optimizer.zero_grad()
             with torch.cuda.amp.autocast():
                 loss, reg, cls_loss, acc = model.forward(y1, y2, labels)
-                scaler.scale(loss + reg + cls_loss).backward()
+                scaler.scale((loss + reg) * args.alpha + cls_loss).backward()
                 if args.max_grad_norm is not None:
                     scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
@@ -181,6 +192,15 @@ def main_worker(gpu, args):
                                  cls_loss=cls_loss.item(), acc=acc.item(),
                                  time=int(time.time() - start_time))
                     print(json.dumps(stats), file=stats_file)
+
+                if writer is not None:
+                    writer.add_scalar('Loss/loss', loss.item(), step)
+                    writer.add_scalar('Loss/reg', reg.item(), step)
+                    writer.add_scalar('Loss/cls_loss', cls_loss.item(), step)
+                    writer.add_scalar('Accuracy/train', acc.item(), step)
+                    writer.add_scalar('Hparams/t', F.softplus(model.module.logit_t).item(), step)
+                    writer.add_scalar('Hparams/lr', lr, step)
+
         if args.rank == 0:
             # save checkpoint
             state = dict(epoch=epoch + 1, model=model.state_dict(),
@@ -346,8 +366,8 @@ class NeuralEFCLR(nn.Module):
         psi_K_psi_diag = (torch.cat([psi1, psi2]) * K_psi).sum(0).view(-1, 1)
         psi_d_K_psi = torch.cat([psi1, psi2]).detach().T @ K_psi
 
-        loss = - psi_K_psi_diag.sum() / (B ** 2) * self.args.alpha
-        reg = (psi_d_K_psi ** 2 / psi_K_psi_diag.detach().abs().clamp_(min=1e-6)).triu(1).sum() / (B ** 2) * self.args.alpha
+        loss = - psi_K_psi_diag.sum() / (B ** 2)
+        reg = (psi_d_K_psi ** 2 / psi_K_psi_diag.detach().abs().clamp_(min=1e-6)).triu(1).sum() / (B ** 2)
 
         logits = self.online_head(r1.detach())
         cls_loss = F.cross_entropy(logits, labels)
