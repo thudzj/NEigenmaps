@@ -24,6 +24,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from torch.utils.tensorboard import SummaryWriter
+from torch.optim.swa_utils import AveragedModel
 
 from utils import *
 
@@ -57,13 +58,16 @@ parser.add_argument('--resume', type=str, default=None)
 
 # parser.add_argument('--riemannian_projection', default=False, action='store_true')
 # parser.add_argument('--neuralef_unloaded', default=False, action='store_true')
-parser.add_argument('--max_grad_norm', default=None, type=float)
-parser.add_argument('--kernel', default=0, type=int)
+# parser.add_argument('--max_grad_norm', default=None, type=float)
+# parser.add_argument('--kernel', default=0, type=int)
 parser.add_argument('--opt', default='default', type=str)
 parser.add_argument('--alpha', default=1, type=float)
 parser.add_argument('--proj_dim', default=[2048, 128], type=int, nargs='+')
+# parser.add_argument('--betas', default=[1, 100], type=float, nargs='+')
 parser.add_argument('--proj_bn', default=False, action='store_true')
 parser.add_argument('--t', default=1, type=float)
+# parser.add_argument('--ema-m', default=0.999, type=float,
+#                     help='momentum of updating teacher (default: 0.999)')
 
 # Dist
 parser.add_argument('--world-size', default=1, type=int,
@@ -118,6 +122,11 @@ def main_worker(gpu, args):
         model = NeuralEFCLR(args).cuda(gpu)
     else:
         model = directCLR(args).cuda(gpu)
+
+    # ema_avg = lambda averaged_model_parameter, model_parameter, num_averaged:\
+    #     args.ema_m * averaged_model_parameter + (1 - args.ema_m) * model_parameter
+    # ema_model = AveragedModel(model, avg_fn=ema_avg)
+
     model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[gpu])
 
@@ -144,6 +153,7 @@ def main_worker(gpu, args):
         start_epoch = ckpt['epoch']
         model.load_state_dict(ckpt['model'])
         optimizer.load_state_dict(ckpt['optimizer'])
+        # ema_model.load_state_dict(ckpt['ema'])
     else:
         start_epoch = 0
 
@@ -166,30 +176,45 @@ def main_worker(gpu, args):
     for epoch in range(start_epoch, args.epochs):
         sampler.set_epoch(epoch)
 
+        # beta = args.betas[1] + (args.betas[0] - args.betas[1]) * (1 + math.cos(math.pi * max(min(1, (epoch - 20) / (args.epochs - 20)), 0) )) / 2
+
         for step, ((y1, y2), labels) in enumerate(loader, start=epoch * len(loader)):
             y1 = y1.cuda(gpu, non_blocking=True)
             y2 = y2.cuda(gpu, non_blocking=True)
+            labels = labels.cuda(gpu, non_blocking=True)
             lr = adjust_learning_rate(args, optimizer, loader, step)
+
             optimizer.zero_grad()
             with torch.cuda.amp.autocast():
+                # if args.mode == 'neuralef':
+                #     with torch.no_grad():
+                #         features1, features2 = ema_model(y1, y2, labels, features=True)
+                #         K, K_mean = build_kernel(args, step, features1, features2, beta=beta)
+                # else:
+                #     K, K_mean = None, torch.tensor([0.]).cuda(gpu, non_blocking=True)
+
                 loss, reg, cls_loss, acc = model.forward(y1, y2, labels)
-                scaler.scale((loss + reg) * args.alpha + cls_loss).backward()
-                if args.max_grad_norm is not None:
-                    scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                scaler.scale(loss + reg * args.alpha + cls_loss).backward()
+                # if args.max_grad_norm is not None:
+                #     scaler.unscale_(optimizer)
+                #     torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 scaler.step(optimizer)
                 scaler.update()
+
+            # with torch.no_grad():
+            #     ema_model.update_parameters(model)
 
             if step % args.print_freq == 0:
                 torch.distributed.reduce(acc.div_(args.world_size), 0)
                 if args.rank == 0:
                     print(f'epoch={epoch}, step={step}, loss={loss.item():.6f},'
                           f' reg={reg.item():.6f}, cls_loss={cls_loss.item():.4f}'
-                          f' acc={acc.item():.4f}, learning_rate={lr:.4f},'
-                          f' t={F.softplus(model.module.logit_t).item():.4f}')
+                          f' acc={acc.item():.4f},'
+                          f' learning_rate={lr:.4f},')
                     stats = dict(epoch=epoch, step=step, learning_rate=lr,
                                  loss=loss.item(), reg=reg.item(),
                                  cls_loss=cls_loss.item(), acc=acc.item(),
+                                 # K_mean=K_mean.item(),
                                  time=int(time.time() - start_time))
                     print(json.dumps(stats), file=stats_file)
 
@@ -198,13 +223,15 @@ def main_worker(gpu, args):
                     writer.add_scalar('Loss/reg', reg.item(), step)
                     writer.add_scalar('Loss/cls_loss', cls_loss.item(), step)
                     writer.add_scalar('Accuracy/train', acc.item(), step)
-                    writer.add_scalar('Hparams/t', F.softplus(model.module.logit_t).item(), step)
                     writer.add_scalar('Hparams/lr', lr, step)
+                    # writer.add_scalar('K/K_mean', K_mean.item(), step)
 
         if args.rank == 0:
             # save checkpoint
             state = dict(epoch=epoch + 1, model=model.state_dict(),
-                         optimizer=optimizer.state_dict())
+                         optimizer=optimizer.state_dict(),
+                         # ema=ema_model.state_dict()
+                         )
             torch.save(state, os.path.join(args.checkpoint_dir, 'checkpoint.pth'))
 
     if args.rank == 0:
@@ -238,7 +265,10 @@ class directCLR(nn.Module):
 
         self.relu = nn.ReLU(inplace=True)
 
-    def forward(self, y1, y2, labels):
+        if args.rank == 0 and hasattr(self, 'projector'):
+            print(self.projector)
+
+    def forward(self, y1, y2, labels, K=None):
         r1 = self.backbone(y1)
         r2 = self.backbone(y2)
 
@@ -293,86 +323,145 @@ class NeuralEFCLR(nn.Module):
                     if args.proj_bn:
                         layers.append(nn.BatchNorm1d(sizes[i+1]))
                     layers.append(nn.ReLU(inplace=True))
-                layers.append(nn.Linear(sizes[-2], sizes[-1], bias=True))
-                # if args.proj_bn:
-                #     layers.append(nn.BatchNorm1d(sizes[-1]))
+                layers.append(nn.Linear(sizes[-2], sizes[-1], bias=False))
+                if args.proj_bn:
+                    layers.append(nn.BatchNorm1d(sizes[-1]))
                 self.projector = nn.Sequential(*layers)
             elif len(args.proj_dim) == 1:
                 self.projector = nn.Linear(2048, args.proj_dim[0], bias=True)
             else:
                 self.projector = nn.Identity()
-        if self.args.kernel == 4:
-            self.logit_t = nn.Parameter(torch.tensor([args.t]).exp().div(1).log(), requires_grad=True)
-        else:
-            self.register_buffer('logit_t', torch.tensor([args.t]).exp().sub(1).log())
 
         if args.rank == 0:
             print(self.projector)
 
-    def forward(self, y1, y2, labels):
-        r1 = self.backbone(y1)
-        r2 = self.backbone(y2)
+    def forward(self, y1, y2, labels=None): #, K=None, features=False
+        # if features:
+        #     return self.backbone(torch.cat([y1, y2], 0)).chunk(2, dim=0)
 
-        z1 = self.projector(r1)
-        z2 = self.projector(r2)
+        r1, r2 = self.backbone(torch.cat([y1, y2], 0)).chunk(2, dim=0)
+        z1, z2 = self.projector(torch.cat([r1, r2], 0)).chunk(2, dim=0)
+
+        # r1 = self.backbone(y1)
+        # r2 = self.backbone(y2)
+        #
+        # z1 = self.projector(r1)
+        # z2 = self.projector(r2)
 
         psi1 = gather_from_all(z1)
         psi2 = gather_from_all(z2)
 
-        B = psi1.shape[0] + psi2.shape[0]
-        norm_ = (psi1.norm(dim=0) ** 2 + psi2.norm(dim=0) ** 2).div(B).sqrt().clamp(min=1e-6)
+        if 0:
+            B = psi1.shape[0] + psi2.shape[0]
+            norm_ = (psi1.norm(dim=0) ** 2 + psi2.norm(dim=0) ** 2).div(B).sqrt().clamp(min=1e-6)
+            psi1, psi2 = psi1.div(norm_), psi2.div(norm_)
 
+            K_psi = torch.cat([psi1 + psi2, psi1 + psi2]) #K @ torch.cat([psi1, psi2])
 
-        psi1, psi2 = psi1.div(norm_), psi2.div(norm_)
+            psi_K_psi_diag = (torch.cat([psi1, psi2]) * K_psi).sum(0).view(-1, 1)
+            psi_d_K_psi = torch.cat([psi1, psi2]).detach().T @ K_psi
 
-        if self.args.kernel == 0:
-            K_psi = torch.cat([psi2 - psi1, psi1 - psi2])
-        elif self.args.kernel == 1:
-            '''
-            K:
-                    x_1   x_2   x_3   x_4  x'_1  x'_2  x'_3  x'_4
-            x_1  | -1/8  -1/8  -1/8  -1/8 1-1/8  -1/8  -1/8  -1/8
-            x_2  | -1/8  -1/8  -1/8  -1/8  -1/8 1-1/8  -1/8  -1/8
-            x_3  | -1/8  -1/8  -1/8  -1/8  -1/8  -1/8 1-1/8  -1/8
-            x_4  | -1/8  -1/8  -1/8  -1/8  -1/8  -1/8  -1/8 1-1/8
-            x'_1 |1-1/8  -1/8  -1/8  -1/8  -1/8  -1/8  -1/8  -1/8
-            x'_2 | -1/8 1-1/8  -1/8  -1/8  -1/8  -1/8  -1/8  -1/8
-            x'_3 | -1/8  -1/8 1-1/8  -1/8  -1/8  -1/8  -1/8  -1/8
-            x'_4 | -1/8  -1/8  -1/8 1-1/8  -1/8  -1/8  -1/8  -1/8
-            '''
-            K_psi = torch.cat([psi2, psi1]) - (psi1.sum(0) + psi2.sum(0)) / B
-        elif self.args.kernel == 2:
-            K_psi = torch.cat([psi1 - psi2, psi2 - psi1])
-        elif self.args.kernel == 3:
-            '''
-            K:
-                    x_1   x_2   x_3   x_4  x'_1  x'_2  x'_3  x'_4
-            x_1  |1-1/8  -1/8  -1/8  -1/8 1-1/8  -1/8  -1/8  -1/8
-            x_2  | -1/8 1-1/8  -1/8  -1/8  -1/8 1-1/8  -1/8  -1/8
-            x_3  | -1/8  -1/8 1-1/8  -1/8  -1/8  -1/8 1-1/8  -1/8
-            x_4  | -1/8  -1/8  -1/8 1-1/8  -1/8  -1/8  -1/8 1-1/8
-            x'_1 |1-1/8  -1/8  -1/8  -1/8 1-1/8  -1/8  -1/8  -1/8
-            x'_2 | -1/8 1-1/8  -1/8  -1/8  -1/8 1-1/8  -1/8  -1/8
-            x'_3 | -1/8  -1/8 1-1/8  -1/8  -1/8  -1/8 1-1/8  -1/8
-            x'_4 | -1/8  -1/8  -1/8 1-1/8  -1/8  -1/8  -1/8 1-1/8
-            '''
-            K_psi = torch.cat([psi1 + psi2, psi2 + psi1]) - (psi1.sum(0) + psi2.sum(0)) / B
-        elif self.args.kernel == 4:
-            tmp = torch.tensor([[1., -1.], [-1., 1.]], device=self.logit_t.device)
-            heat_kernel = torch.matrix_exp(-1 * F.softplus(-self.logit_t + (self.logit_t*2).detach()) * tmp)
-            K_psi = torch.cat([psi1 * heat_kernel[0, 0] + psi2 * heat_kernel[0, 1],
-                               psi1 * heat_kernel[0, 1] + psi2 * heat_kernel[0, 0]])
+            loss = - psi_K_psi_diag.sum() / (B ** 2)
+            reg = ((psi_d_K_psi/B) ** 2 / psi_K_psi_diag.detach().abs().clamp_(min=1e-6)).triu(1).sum()
+        else:
+            # B = psi1.shape[0]
+            # psi1 = F.normalize(psi1, dim=0)
+            # psi2 = F.normalize(psi2, dim=0)
 
-        psi_K_psi_diag = (torch.cat([psi1, psi2]) * K_psi).sum(0).view(-1, 1)
-        psi_d_K_psi = torch.cat([psi1, psi2]).detach().T @ K_psi
+            norm_ = (psi1.norm(dim=0) ** 2 + psi2.norm(dim=0) ** 2).sqrt().clamp(min=1e-6)
+            psi1, psi2 = psi1.div(norm_) * math.sqrt(2 * self.args.t), psi2.div(norm_) * math.sqrt(2 * self.args.t)
 
-        loss = - psi_K_psi_diag.sum() / (B ** 2)
-        reg = (psi_d_K_psi ** 2 / psi_K_psi_diag.detach().abs().clamp_(min=1e-6)).triu(1).sum() / (B ** 2)
+            psi_K_psi_diag = (psi1 * psi2).sum(0).view(-1, 1)
+            psi2_d_K_psi1 = psi2.detach().T @ psi1
+            psi1_d_K_psi2 = psi1.detach().T @ psi2
+
+            loss = - psi_K_psi_diag.sum() * 2
+            reg = ((psi2_d_K_psi1) ** 2).triu(1).sum() \
+                + ((psi1_d_K_psi2) ** 2).triu(1).sum()
+            loss /= psi_K_psi_diag.numel()
+            reg /= psi_K_psi_diag.numel()
+            # reg = (reg / psi_K_psi_diag.numel()).sqrt()
+
 
         logits = self.online_head(r1.detach())
         cls_loss = F.cross_entropy(logits, labels)
         acc = torch.sum(torch.eq(torch.argmax(logits, dim=1), labels)) / logits.size(0)
         return loss, reg, cls_loss, acc
+
+# def build_kernel(args, step, features1, features2, beta):
+#     features = torch.cat([gather_from_all(features1), gather_from_all(features2)])
+#
+#     # following MOCO
+#     # K = cosine_kernel(0.07, features)
+#     # K.mul_(weight)
+#     # K_mean = (K.sum() - K.diagonal().sum()) / K.shape[0] / (K.shape[0] - 1)
+#
+#     features = F.normalize(features, dim=-1)
+#     cov = features @ features.T
+#     K = (cov >= beta).float()
+#     K_mean = (K.sum() - K.diagonal().sum()) / K.shape[0]
+#
+#     # K.diagonal().add_(1.)
+#     # K.fill_(0.);
+#     K.diagonal().fill_(1.)
+#     K.diagonal(features.shape[0]//2).fill_(1.)
+#     K.diagonal(-features.shape[0]//2).fill_(1.)
+#     # diag = adj.sum(-1)
+#     # laplacian = adj.mul_(-1.)
+#     # laplacian.diagonal().add_(diag)
+#     # laplacian.div_(diag.sqrt().view(1, -1)).div_(diag.sqrt().view(-1, 1))
+#     # K = torch.matrix_exp(-1 * args.t * laplacian.float())
+#     return K, K_mean
+#
+# def rbf_kernel(length_scale, x1, x2=None):
+# 	if x2 is None:
+# 		x2 = x1
+#
+# 	if x1.dim() == 1:
+# 		x1 = x1.unsqueeze(-1)
+# 	if x2.dim() == 1:
+# 		x2 = x2.unsqueeze(-1)
+#
+# 	x1 = x1.flatten(1)
+# 	x2 = x2.flatten(1)
+#
+# 	#
+# 	# (x1 ** 2).sum(-1).view(-1, 1) + (x2 ** 2).sum(-1).view(1, -1) - 2 * x1 @ x2.T
+# 	return (- ((x1 ** 2).sum(-1).view(-1, 1) + (x2 ** 2).sum(-1).view(1, -1) - 2 * x1 @ x2.T) / 2. / length_scale).exp()
+#
+# def cosine_kernel(length_scale, x1, x2=None):
+# 	if x2 is None:
+# 		x2 = x1
+#
+# 	if x1.dim() == 1:
+# 		x1 = x1.unsqueeze(-1)
+# 	if x2.dim() == 1:
+# 		x2 = x2.unsqueeze(-1)
+#
+# 	x1 = x1.flatten(1)
+# 	x2 = x2.flatten(1)
+#
+# 	x1 = F.normalize(x1, dim=-1)
+# 	x2 = F.normalize(x2, dim=-1)
+#
+# 	#
+# 	# (x1 ** 2).sum(-1).view(-1, 1) + (x2 ** 2).sum(-1).view(1, -1) - 2 * x1 @ x2.T
+# 	return ((x1 @ x2.T - 1) / length_scale).exp()
+#
+# def sigmoid_kernel(length_scale, x1, x2=None, bias=0):
+# 	if x2 is None:
+# 		x2 = x1
+# 	if x1.dim() == 1:
+# 		x1 = x1.unsqueeze(-1)
+# 	if x2.dim() == 1:
+# 		x2 = x2.unsqueeze(-1)
+# 	x1 = x1.flatten(1)
+# 	x2 = x2.flatten(1)
+#
+# 	x1 = F.normalize(x1, dim=-1)
+# 	x2 = F.normalize(x2, dim=-1)
+#
+# 	return (x1 @ x2.T * length_scale + bias).tanh()
 
 if __name__ == '__main__':
     main()
