@@ -33,7 +33,12 @@ NCCL_SOCKET_IFNAME=ibs8 python main.py --dist-url tcp://10.2.1.47 --world-size 2
 python main.py --checkpoint-dir ./logs --batch-size 1920 --name simclr --dist-port 8872 --mode simclr --opt lars --learning-rate 2.25
     {"epoch": 99, "acc1": 63.474, "acc5": 85.67, "best_acc1": 63.5, "best_acc5": 85.74}
 
-python main.py --checkpoint-dir ./logs --batch-size 1920 --name simclr-o --dist-port 8872 --mode simclr --learning-rate 2.25
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python main.py --checkpoint-dir ./logs --batch-size 2048 --name simclr-o-bs2048 --dist-port 8872 --mode simclr --learning-rate 2.4; CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python linear_probe.py --pretrained logs/simclr-o-bs2048/final.pth
+    0.1 cos {"epoch": 99, "acc1": 63.978, "acc5": 85.976, "best_acc1": 63.998, "best_acc5": 86.008}
+    0.3 cos {"epoch": 99, "acc1": 64.616, "acc5": 86.254, "best_acc1": 64.642, "best_acc5": 86.308}
+    0.1 {"epoch": 99, "acc1": 64.032, "acc5": 86.128, "best_acc1": 64.052, "best_acc5": 86.128}
+
+    python main.py --checkpoint-dir ./logs --batch-size 1920 --name simclr-o --dist-port 8872 --mode simclr --learning-rate 2.25
     {"epoch": 98, "acc1": 64.022, "acc5": 85.936, "best_acc1": 64.05, "best_acc5": 85.968}
 
     CUDA_VISIBLE_DEVICES=4,5,6,7 python main.py --checkpoint-dir ./logs --batch-size 1024 --name simclr-o-bs1024 --dist-port 8872 --mode simclr --learning-rate 1.2; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/simclr-o-bs1024/final.pth
@@ -43,30 +48,54 @@ python main.py --checkpoint-dir ./logs --batch-size 1920 --name simclr-o --dist-
     {"epoch": 99, "acc1": 61.068, "acc5": 83.722, "best_acc1": 61.136, "best_acc5": 83.78}
 
     CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python main.py --checkpoint-dir ./logs --batch-size 256 --name simclr-o-bs256 --dist-port 8874 --mode simclr --learning-rate 0.3; CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python linear_probe.py --pretrained logs/simclr-o-bs256/final.pth
+    {"epoch": 99, "acc1": 59.25, "acc5": 82.218, "best_acc1": 59.272, "best_acc5": 82.28}
 
-python main.py --checkpoint-dir ./logs --batch-size 1920 --name neuralef-P --dist-port 8872 --mode neuralef --opt lars --learning-rate 2.25 --alpha 0.25 --proj_dim 2048 4096 --proj_bn
-    {"epoch": 99, "acc1": 61.802, "acc5": 84.384, "best_acc1": 61.804, "best_acc5": 84.424}
+    CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 python main.py --checkpoint-dir ./logs --batch-size 2046 --name simclr-o-bs2046-o4096 --dist-port 8872 --mode simclr --learning-rate 2.4 --proj_dim 2048 4096; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/simclr-o-bs2046-o4096/final.pth --lr-classifier 0.3
+        {"epoch": 98, "acc1": 64.962, "acc5": 86.388, "best_acc1": 64.964, "best_acc5": 86.45}
 
-python main.py --dist-url tcp://10.2.1.47 --world-size 1 --rank 0 --checkpoint-dir ./logs --batch-size 1920 --name neuralef-Q --dist-port 8872 --mode neuralef --opt lars --learning-rate 2.25 --alpha 0.5 --proj_bn --proj_dim 2048 2048
+    CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 python main.py --checkpoint-dir ./logs --batch-size 1794 --name simclr-o-bs1792-8192 --dist-port 8872 --mode simclr --learning-rate 2.1 --proj_dim 2048 8192; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/simclr-o-bs1792-8192/final.pth --lr-classifier 0.3
 
-python main.py --checkpoint-dir ./logs --batch-size 1920 --name neuralef-P-t10 --dist-port 8872 --mode neuralef --opt lars --learning-rate 2.25 --alpha 0.01 --proj_dim 2048 4096 --proj_bn --t 10
+
+python main.py --checkpoint-dir ./logs --batch-size 1920 --name neuralef-P-t10 --dist-port 8872 --mode neuralef --opt lars --learning-rate 2.25 --alpha 0.01 --proj_dim 2048 4096
     {"epoch": 98, "acc1": 65.34, "acc5": 86.102, "best_acc1": 65.364, "best_acc5": 86.162}
 
 
-CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 python main.py --checkpoint-dir ./logs --batch-size 2046 --name neuralef-P-t10-o-bs2046 --dist-port 8872 --mode neuralef --learning-rate 2.4 --alpha 0.01 --proj_dim 2048 4096 --proj_bn --t 10; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/neuralef-P-t10-o-bs2046/final.pth
+CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 python main.py --checkpoint-dir ./logs --batch-size 2046 --name neuralef-P-t10-o-bs2046 --dist-port 8872 --mode neuralef --learning-rate 2.4 --alpha 0.01 --proj_dim 2048 4096; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/neuralef-P-t10-o-bs2046/final.pth
+    0.1 cos {"epoch": 99, "acc1": 66.146, "acc5": 86.626, "best_acc1": 66.196, "best_acc5": 86.642}
+    0.3 cos {"epoch": 98, "acc1": 65.984, "acc5": 86.444, "best_acc1": 65.988, "best_acc5": 86.444}
+    0.1 xxx
 
-    CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 python main.py --checkpoint-dir ./logs --batch-size 1920 --name neuralef-P-t10-o --dist-port 8872 --mode neuralef --learning-rate 2.25 --alpha 0.01 --proj_dim 2048 4096 --proj_bn --t 10; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/neuralef-P-t10-o/final.pth
+    CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 python main.py --checkpoint-dir ./logs --batch-size 1920 --name neuralef-P-t10-o --dist-port 8872 --mode neuralef --learning-rate 2.25 --alpha 0.01 --proj_dim 2048 4096; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/neuralef-P-t10-o/final.pth
     {"epoch": 99, "acc1": 66.156, "acc5": 86.688, "best_acc1": 66.212, "best_acc5": 86.696}
 
-    CUDA_VISIBLE_DEVICES=4,5,6,7 python main.py --checkpoint-dir ./logs --batch-size 1024 --name neuralef-P-t10-o-bs1024 --dist-port 8872 --mode neuralef --learning-rate 1.2 --alpha 0.01 --proj_dim 2048 4096 --proj_bn --t 10; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/neuralef-P-t10-o-bs1024/final.pth
+    CUDA_VISIBLE_DEVICES=4,5,6,7 python main.py --checkpoint-dir ./logs --batch-size 1024 --name neuralef-P-t10-o-bs1024 --dist-port 8872 --mode neuralef --learning-rate 1.2 --alpha 0.01 --proj_dim 2048 4096; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/neuralef-P-t10-o-bs1024/final.pth
     {"'epoch": 99, "acc1": 64.698, "acc5": 85.898. "best acc1": 64.73, "best acc5": 85.924}
 
-    CUDA_VISIBLE_DEVICES=2,3 python main.py --checkpoint-dir ./logs --batch-size 512 --name neuralef-P-t10-o-bs512 --dist-port 8873 --mode neuralef --learning-rate 0.6 --alpha 0.01 --proj_dim 2048 4096 --proj_bn --t 10; CUDA_VISIBLE_DEVICES=2,3 python linear_probe.py --pretrained logs/neuralef-P-t10-o-bs512/final.pth
+    CUDA_VISIBLE_DEVICES=2,3 python main.py --checkpoint-dir ./logs --batch-size 512 --name neuralef-P-t10-o-bs512 --dist-port 8873 --mode neuralef --learning-rate 0.6 --alpha 0.01 --proj_dim 2048 4096; CUDA_VISIBLE_DEVICES=2,3 python linear_probe.py --pretrained logs/neuralef-P-t10-o-bs512/final.pth
     {"epoch": 99, "acc1": 61.708, "acc5": 84.08, "best_acc1": 61.728, "best_acc5": 84.13}
 
-    CUDA_VISIBLE_DEVICES=4,5,6,7 python main.py --checkpoint-dir ./logs --batch-size 256 --name neuralef-P-t10-o-bs256 --dist-port 8874 --mode neuralef --learning-rate 0.3 --alpha 0.005 --proj_dim 2048 4096 --proj_bn --t 10; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/neuralef-P-t10-o-bs256/final.pth
+    CUDA_VISIBLE_DEVICES=4,5,6,7 python main.py --checkpoint-dir ./logs --batch-size 256 --name neuralef-P-t10-o-bs256 --dist-port 8874 --mode neuralef --learning-rate 0.3 --alpha 0.005 --proj_dim 2048 4096; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/neuralef-P-t10-o-bs256/final.pth
     {"epoch": 99, "acc1": 60.29, "acc5": 82.85, "best_acc1": 60.346, "best_acc5": 82.938}
 
+    python main.py --checkpoint-dir ./logs --batch-size 1920 --name neuralef-P-t10-o-sepbn --dist-port 8872 --mode neuralef --learning-rate 2.25 --alpha 0.01 --proj_dim 2048 4096; python linear_probe.py --pretrained logs/neuralef-P-t10-o-sepbn/final.pth --lr-classifier 0.3
+    {"epoch": 99, "acc1": 64.674, "acc5": 85.734, "best_acc1": 64.7, "best_acc5": 85.758}
 
-python main.py --checkpoint-dir ./logs --batch-size 1920 --name neuralef-Q-t10-o --dist-port 8872 --mode neuralef --learning-rate 2.25 --alpha 0.025 --proj_dim 2048 2048 --proj_bn --t 10; python linear_probe.py --pretrained logs/neuralef-Q-t10-o/final.pth
+    python main.py --checkpoint-dir ./logs --batch-size 1792 --name neuralef-P-t10-o-bs1792-8192 --dist-port 8872 --mode neuralef --learning-rate 2.1 --alpha 0.01 --proj_dim 2048 8192; python linear_probe.py --pretrained logs/neuralef-P-t10-o-bs1792-8192/final.pth --lr-classifier 0.3
+    {"epoch": 99, "acc1": 64.874, "acc5": 86.008, "best_acc1": 64.876, "best_acc5": 86.036}
+
+    python main.py --checkpoint-dir ./logs --batch-size 1920 --name neuralef-P-t10-o-2 --dist-port 8872 --mode neuralef --learning-rate 2.25 --alpha 0.01 --proj_dim 2048 4096; python linear_probe.py --pretrained logs/neuralef-P-t10-o-2/final.pth
+
+
+python main.py --checkpoint-dir ./logs --batch-size 1920 --name neuralef-Q-t10-o --dist-port 8872 --mode neuralef --learning-rate 2.25 --alpha 0.025 --proj_dim 2048 2048; python linear_probe.py --pretrained logs/neuralef-Q-t10-o/final.pth
     {"epoch": 99, "acc1": 65.824, "acc5": 86.46, "best_acc1": 65.848, "best_acc5": 86.48}
+
+CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 python main.py --checkpoint-dir ./logs --batch-size 2046 --name bt-bs2046 --dist-port 8872 --mode bt --learning-rate 1.6 --alpha 0.0051 --proj_dim 2048 4096 --scale-loss 0.024; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/bt-bs2046/final.pth
+    0.1 cos {"epoch": 99, "acc1": 60.984, "acc5": 83.608, "best_acc1": 60.99, "best_acc5": 83.62}
+    0.3 cos {"epoch": 99, "acc1": 62.218, "acc5": 84.378, "best_acc1": 62.242, "best_acc5": 84.4}
+    0.1 {"epoch": 99, "acc1": 61.694, "acc5": 84.166, "best_acc1": 61.694, "best_acc5": 84.166}
+
+    CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 python main.py --checkpoint-dir ./logs --batch-size 2046 --name bt-bs2046-lr.3 --dist-port 8872 --mode bt --learning-rate 2.4 --alpha 0.0051 --proj_dim 2048 4096 --scale-loss 0.024; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/bt-bs2046-lr.3/final.pth --lr-classifier 0.3
+        {"epoch": 99, "acc1": 63.596, "acc5": 85.236, "best_acc1": 63.616, "best_acc5": 85.25}
+
+    CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 python main.py --checkpoint-dir ./logs --batch-size 1794 --name bt-bs1792-lr.3-8192 --dist-port 8872 --mode bt --learning-rate 2.1 --alpha 0.0051 --proj_dim 2048 8192 --scale-loss 0.024; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/bt-bs1792-lr.3-8192/final.pth --lr-classifier 0.3
+    {"epoch": 99, "acc1": 64.03, "acc5": 85.706, "best_acc1": 64.07, "best_acc5": 85.706}
