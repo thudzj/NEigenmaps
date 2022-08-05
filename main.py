@@ -44,7 +44,7 @@ parser.add_argument('--log-dir', type=str, default='./logs/',
 parser.add_argument('--dim', default=360, type=int,
                     help="dimension of subvector sent to infoNCE")
 parser.add_argument('--mode', type=str, default="baseline",
-                    choices=["baseline", "simclr", "directclr", "neuralef", "bt"],
+                    choices=["baseline", "simclr", "directclr", "neuralef", "bt", "spectral"],
                     help="project type")
 parser.add_argument('--name', type=str, default='default')
 parser.add_argument('--resume', type=str, default=None)
@@ -53,6 +53,12 @@ parser.add_argument('--alpha', default=1, type=float)
 parser.add_argument('--proj_dim', default=[2048, 128], type=int, nargs='+')
 parser.add_argument('--no_proj_bn', default=False, action='store_true')
 parser.add_argument('--t', default=10, type=float)
+
+# for ablation
+parser.add_argument('--no_stop_grad', default=False, action='store_true')
+parser.add_argument('--l2_normalize', default=False, action='store_true')
+parser.add_argument('--no_last_bn', default=False, action='store_true')
+parser.add_argument('--not_all_together', default=False, action='store_true')
 
 # Dist
 parser.add_argument('--world-size', default=1, type=int,
@@ -112,6 +118,8 @@ def main_worker(gpu, args):
         model = NeuralEFCLR(args).cuda(gpu)
     elif args.mode == 'bt':
         model = BarlowTwins(args).cuda(gpu)
+    elif args.mode == 'spectral':
+        model = SpectralCLR(args).cuda(gpu)
     else:
         model = directCLR(args).cuda(gpu)
 
@@ -282,9 +290,13 @@ class NeuralEFCLR(nn.Module):
                     if args.proj_bn:
                         layers.append(nn.BatchNorm1d(sizes[i+1]))
                     layers.append(nn.ReLU(inplace=True))
-                layers.append(nn.Linear(sizes[-2], sizes[-1], bias=False))
-                if args.proj_bn:
+
+                if not args.no_last_bn and args.proj_bn:
+                    layers.append(nn.Linear(sizes[-2], sizes[-1], bias=False))
                     layers.append(nn.BatchNorm1d(sizes[-1]))
+                else:
+                    layers.append(nn.Linear(sizes[-2], sizes[-1], bias=True))
+
                 self.projector = nn.Sequential(*layers)
             elif len(args.proj_dim) == 1:
                 self.projector = nn.Linear(2048, args.proj_dim[0], bias=True)
@@ -293,25 +305,38 @@ class NeuralEFCLR(nn.Module):
             print(self.projector)
 
     def forward(self, y1, y2, labels=None):
-        r1, r2 = self.backbone(torch.cat([y1, y2], 0)).chunk(2, dim=0)
-        z1, z2 = self.projector(torch.cat([r1, r2], 0)).chunk(2, dim=0)
+        if self.args.not_all_together:
+            r1 = self.backbone(y1)
+            r2 = self.backbone(y2)
 
-        # r1 = self.backbone(y1)
-        # r2 = self.backbone(y2)
-        #
-        # z1 = self.projector(r1)
-        # z2 = self.projector(r2)
+            z1 = self.projector(r1)
+            z2 = self.projector(r2)
+        else:
+            r1, r2 = self.backbone(torch.cat([y1, y2], 0)).chunk(2, dim=0)
+            z1, z2 = self.projector(torch.cat([r1, r2], 0)).chunk(2, dim=0)
 
         psi1 = gather_from_all(z1)
         psi2 = gather_from_all(z2)
 
-        norm_ = (psi1.norm(dim=0) ** 2 + psi2.norm(dim=0) ** 2).sqrt().clamp(min=1e-6)
-        psi1 = psi1.div(norm_) * math.sqrt(2 * self.args.t)
-        psi2 = psi2.div(norm_) * math.sqrt(2 * self.args.t)
+        if self.args.l2_normalize:
+            psi1 = F.normalize(psi1, dim=1) * math.sqrt(self.args.t)
+            psi2 = F.normalize(psi2, dim=1) * math.sqrt(self.args.t)
+        else:
+            if self.args.not_all_together:
+                psi1 = psi1.div(psi1.norm(dim=0).clamp(min=1e-6)) * math.sqrt(self.args.t)
+                psi2 = psi2.div(psi2.norm(dim=0).clamp(min=1e-6)) * math.sqrt(self.args.t)
+            else:
+                norm_ = (psi1.norm(dim=0) ** 2 + psi2.norm(dim=0) ** 2).sqrt().clamp(min=1e-6)
+                psi1 = psi1.div(norm_) * math.sqrt(2 * self.args.t)
+                psi2 = psi2.div(norm_) * math.sqrt(2 * self.args.t)
 
         psi_K_psi_diag = (psi1 * psi2).sum(0).view(-1, 1)
-        psi2_d_K_psi1 = psi2.detach().T @ psi1
-        psi1_d_K_psi2 = psi1.detach().T @ psi2
+        if self.args.no_stop_grad:
+            psi2_d_K_psi1 = psi2.T @ psi1
+            psi1_d_K_psi2 = psi1.T @ psi2
+        else:
+            psi2_d_K_psi1 = psi2.detach().T @ psi1
+            psi1_d_K_psi2 = psi1.detach().T @ psi2
 
         loss = - psi_K_psi_diag.sum() * 2
         reg = ((psi2_d_K_psi1) ** 2).triu(1).sum() \
@@ -383,6 +408,58 @@ class BarlowTwins(nn.Module):
         off_diag = off_diagonal(c).pow_(2).sum().mul(self.args.scale_loss)
         loss = on_diag
         reg = off_diag
+
+        logits = self.online_head(r1.detach())
+        cls_loss = F.cross_entropy(logits, labels)
+        acc = torch.sum(torch.eq(torch.argmax(logits, dim=1), labels)) / logits.size(0)
+        return loss, reg, cls_loss, acc
+
+class SpectralCLR(nn.Module):
+    def __init__(self, args):
+        super().__init__()
+        self.args = args
+        self.backbone = torchvision.models.resnet50(zero_init_residual=True)
+        self.backbone.fc = nn.Identity()
+
+        self.online_head = nn.Linear(2048, 1000)
+
+        if args.proj_dim[0] == 0:
+            self.projector = nn.Identity()
+        else:
+            if len(args.proj_dim) > 1:
+                sizes = [2048,] + args.proj_dim
+                layers = []
+                for i in range(len(sizes) - 2):
+                    layers.append(nn.Linear(sizes[i], sizes[i + 1], bias=False))
+                    if args.proj_bn:
+                        layers.append(nn.BatchNorm1d(sizes[i+1]))
+                    layers.append(nn.ReLU(inplace=True))
+                layers.append(nn.Linear(sizes[-2], sizes[-1], bias=False))
+                if args.proj_bn:
+                    layers.append(nn.BatchNorm1d(sizes[-1]))
+                self.projector = nn.Sequential(*layers)
+            elif len(args.proj_dim) == 1:
+                self.projector = nn.Linear(2048, args.proj_dim[0], bias=True)
+
+        if args.rank == 0 and hasattr(self, 'projector'):
+            print(self.projector)
+
+    def forward(self, y1, y2, labels=None):
+        r1 = self.backbone(y1)
+        r2 = self.backbone(y2)
+        z1 = self.projector(r1)
+        z2 = self.projector(r2)
+
+        z1 = F.normalize(z1, dim=1) * math.sqrt(self.args.t)
+        z2 = F.normalize(z2, dim=1) * math.sqrt(self.args.t)
+
+        psi1 = gather_from_all(z1)
+        psi2 = gather_from_all(z2)
+
+        loss = - (psi1 * psi2).sum(1).mean() * 2
+        regs = (psi1 @ psi2.T) ** 2
+        regs.fill_diagonal_(0)
+        reg = regs.sum() / psi1.shape[0] / (psi1.shape[0] - 1)
 
         logits = self.online_head(r1.detach())
         cls_loss = F.cross_entropy(logits, labels)
