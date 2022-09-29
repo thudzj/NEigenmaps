@@ -1,54 +1,31 @@
-# DirectCLR
+### Evaluation in vision domain
 
-DirectCLR is a simple contrastive learning model for visual representation learning. It does not require a trainable projector as SimCLR. It is able to prevent dimensional collapse and outperform SimCLR with a linear projector.
-
-<p align="center">
-  <img width="300" alt="DirectCLR" src="figures/directCLR.png">
-</p>
-
-PyTorch implementation of DirectCLR from paper [Understanding Dimensional Collapse in Contrastive Self-supervised Learning](https://arxiv.org/abs/2110.09348).
+Train our method on ImageNet and then perform linear probe
 
 ```
-@article{Jing2021UnderstandingDC,
-  title={Understanding Dimensional Collapse in Contrastive Self-supervised Learning},
-  author={Li Jing and Pascal Vincent and Yann LeCun and Yuandong Tian},
-  journal={arXiv preprint arXiv:2110.09348},
-  year={2021}
-}
+python main.py --data /path/to/imagenet/ --batch-size 2048 --name our --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.0025 --proj_dim 8192 8192 {--no_stop_grad} --epochs {100, 200, 400}; python linear_probe.py --data /path/to/imagenet/ --pretrained logs/our/final.pth
+```
+When using `--proj_dim 4096 4096`, set `--alpha 0.005`; when using `--proj_dim 2048 2048`, set `--alpha 0.01`. If setting a different batch size from 2048, remember to linearly scale the learning rate.
+
+Evaluate on COCO
+```
+cd detection;
+python convert-pretrain-to-detectron2.py ../logs/neuralef/final.pth output.pkl
+python train_net.py --config-file configs/coco_R_50_C4_2x_moco.yaml --num-gpus 8 MODEL.WEIGHTS ./output.pkl SOLVER.BASE_LR 0.05
 ```
 
-### DirectCLR Training
-
-Install PyTorch and download ImageNet by following the instructions in the [requirements](https://github.com/pytorch/examples/tree/master/imagenet#requirements) section of the PyTorch ImageNet training example. The code has been developed for PyTorch version 1.7.1 and torchvision version 0.8.2, but it should work with other versions just as well. 
-
-Our best model is obtained by running the following command:
-
+Perform spectral hashing
 ```
-python main.py --data /path/to/imagenet/ --mode directclr --dim 360
-```
-`Mode` can be chosen as:
-
-`simclr`: standard SimCLR with two layer nonlinear projector;
-
-`single`: SimCLR with single layer linear projector;
-
-`baseline`: SimCLR without a projector;
-
-`directclr`: DirectCLR with single layer linear projector;
-
-
-Training time is approximately 7 hours on 32 v100 GPUs.
-
-### Evaluation: Linear Classification
-
-Train a linear probe on the representations. Freeze the weights of the resnet and use the entire ImageNet training set.
-
-```
-python linear_probe.py /path/to/imagenet/ /path/to/checkpoint/resnet50.pth
+python main_hash.py --data /path/to/imagenet/ --batch-size 2024 --name hashing --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.01 --proj_dim 2048 2048 --t 30
 ```
 
-Linear probe time is approximately 20 hours on 8 v100 GPUs.
+### Evaluation in node property prediction
+Training:
+```
+python main_products.py  --root /path/to/ogbn --device 3 --model res_mlp --hidden_channels 2048 --num_layers 12 --proj_dim 8192 8192 --alpha 0.3 --lr 0.3 --weight_decay 0 --batch_size 16384 --epochs 20 --no_stop_grad --output_dir logs/products_al.3_lr.3_w2048_nosg; 
+```
 
-### License
-
-This project is under the CC-BY-NC 4.0 license. See [LICENSE](LICENSE) for details.
+Linear probe:
+```
+python main_products.py --root /path/to/ogbn --device 3 --model res_mlp --hidden_channels 2048 --num_layers 12 --proj_dim 8192 8192 --alpha 0.3 --lr 0.3 --weight_decay 0 --batch_size 16384 --epochs 20 --no_stop_grad --output_dir logs/products_al.3_lr.3_w2048_nosg  --ft_only --ft_mode freeze --ft_lr 0.01 --ft_weight_decay 1e-3 --ft_smoothing 0.1 --runs 10
+```

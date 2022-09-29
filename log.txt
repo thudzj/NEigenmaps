@@ -127,6 +127,8 @@ python main.py --batch-size 2048 --name neuralef-bs2048 --dist-port 8872 --mode 
 
     python main.py --batch-size 2048 --name neuralef-nosg-nolbn-bs2048 --dist-port 8872 --mode neuralef --learning-rate 2.4 --alpha 0.01 --proj_dim 2048 2048 --no_stop_grad --no_last_bn; python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-bs2048/final.pth
     {"epoch": 99, "acc1": 66.806, "acc5": 87.148, "best_acc1": 66.82, "best_acc5": 87.154}
+        python main.py --batch-size 2048 --name neuralef-nolbn-pos-bs2048 --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.01 --proj_dim 2048 2048 --no_last_bn --positive_def; python linear_probe.py --pretrained logs/neuralef-nolbn-pos-bs2048/final.pth
+        todo
 
     python main.py --batch-size 2048 --name neuralef-nosg-nolbn-notto-bs2048 --dist-port 8872 --mode neuralef --learning-rate 2.4 --alpha 0.01 --proj_dim 2048 2048 --no_stop_grad --no_last_bn --not_all_together; python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-notto-bs2048/final.pth
     {"epoch": 99, "acc1": 64.578, "acc5": 85.91, "best_acc1": 64.608, "best_acc5": 85.954}
@@ -137,17 +139,61 @@ python main.py --batch-size 2048 --name neuralef-bs2048 --dist-port 8872 --mode 
     CUDA_VISIBLE_DEVICES=4,5,6,7 python main.py --batch-size 1024 --name neuralef-nosg-nolbn-bs1024 --dist-port 8872 --mode neuralef --learning-rate 1.2 --alpha 0.01 --proj_dim 2048 2048 --no_stop_grad --no_last_bn; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-bs1024/final.pth
     {"epoch": 99, "acc1": 65.682, "acc5": 86.584, "best_acc1": 65.722, "best_acc5": 86.632}
 
+        python main.py --batch-size 1024 --name neuralef-nolbn-pos-bs1024 --dist-port 8873 --mode neuralef --learning-rate 1.2 --alpha 0.01 --proj_dim 2048 2048 --no_last_bn --positive_def; python linear_probe.py --pretrained logs/neuralef-nolbn-pos-bs1024/final.pth
+        todo
+
+        nohup python main.py --batch-size 1024 --name neuralef-nosg-nolbn-pos-bs1024 --dist-port 8873 --mode neuralef --learning-rate 1.2 --alpha 0.01 --proj_dim 2048 2048 --no_stop_grad --no_last_bn --positive_def > output_neuralef-nosg-nolbn-pos-bs1024.txt; python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-pos-bs1024/final.pth
+        todo
+
     CUDA_VISIBLE_DEVICES=0,1,2,3 python main.py --batch-size 512 --name neuralef-nosg-nolbn-bs512 --dist-port 8873 --mode neuralef --learning-rate 0.6 --alpha 0.01 --proj_dim 2048 2048 --no_stop_grad --no_last_bn; CUDA_VISIBLE_DEVICES=0,1,2,3 python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-bs512/final.pth
     {"epoch": 99, "acc1": 63.25, "acc5": 85.364, "best_acc1": 63.326, "best_acc5": 85.4}
 
+        CUDA_VISIBLE_DEVICES=4,5,6,7 python main.py --batch-size 512 --name neuralef-nolbn-pos-bs512 --dist-port 8873 --mode neuralef --learning-rate 0.6 --alpha 0.01 --proj_dim 2048 2048 --no_last_bn --positive_def; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/neuralef-nolbn-pos-bs512/final.pth
+        todo
+
+        CUDA_VISIBLE_DEVICES=4,5,6,7 nohup python main.py --batch-size 512 --name neuralef-nosg-nolbn-pos-bs512 --dist-port 8873 --mode neuralef --learning-rate 0.6 --alpha 0.01 --proj_dim 2048 2048 --no_stop_grad --no_last_bn --positive_def  > output_neuralef-nosg-nolbn-pos-bs512.txt; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-pos-bs512/final.pth
+        todo
+
     CUDA_VISIBLE_DEVICES=4,5,6,7 python main.py --batch-size 256 --name neuralef-nosg-nolbn-bs256 --dist-port 8873 --mode neuralef --learning-rate 0.3 --alpha 0.01 --proj_dim 2048 2048 --no_stop_grad --no_last_bn; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-bs256/final.pth
     {"epoch": 99, "acc1": 60.496, "acc5": 83.076, "best_acc1": 60.524, "best_acc5": 83.096}
+
+    srun python main.py --world-size $WORLD_SIZE --batch-size 4096 --name neuralef-nosg-nolbn-bs4096 --mode neuralef --learning-rate 3.2 --alpha 0.01 --proj_dim 2048 2048 --no_stop_grad --no_last_bn (tuned lr)
+    {"epoch": 99, "acc1": 65.178, "acc5": 86.15, "best_acc1": 65.242, "best_acc5": 86.236}
 
     python main.py --batch-size 2048 --name neuralef-nosg-nolbn-o4096 --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.005 --proj_dim 4096 4096 --no_stop_grad --no_last_bn; python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-o4096/final.pth
     {"epoch": 99, "acc1": 67.716, "acc5": 87.838, "best_acc1": 67.75, "best_acc5": 87.864}
 
     python main.py --batch-size 2048 --name neuralef-nosg-nolbn-o8192 --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.0025 --proj_dim 8192 8192 --no_stop_grad --no_last_bn; python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-o8192/final.pth
     {"epoch": 99, "acc1": 68.42, "acc5": 88.128, "best_acc1": 68.422, "best_acc5": 88.128}
+        python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-o8192/final.pth --train-percent 10
+          {"epoch": 99, "acc1": 60.204, "acc5": 82.958, "best_acc1": 60.252, "best_acc5": 82.998}
+        python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-o8192/final.pth --train-percent 1
+          {"epoch": 99, "acc1": 45.758, "acc5": 71.588, "best_acc1": 45.77, "best_acc5": 71.722}
+
+      python main.py --batch-size 2050 --name neuralef-nolbn-o8192 --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.0025 --proj_dim 8192 8192 --no_last_bn --data /workspace/home/fanbao/datasets/ImageNet; CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python linear_probe.py --pretrained logs/neuralef-nolbn-o8192/final.pth --data /workspace/home/fanbao/datasets/ImageNet
+        g41
+        {"epoch": 99, "acc1": 67.572, "acc5": 87.412, "best_acc1": 67.592, "best_acc5": 87.462}
+
+    python main.py --batch-size 2032 --name neuralef-nosg-nolbn-1lp-bs2048 --dist-port 8872 --mode neuralef --learning-rate 2.4 --alpha 0.01 --proj_dim 2048 --no_stop_grad --no_last_bn; python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-1lp-bs2048/final.pth
+    not converge
+
+    python main.py --batch-size 2000 --name neuralef-nosg-nobn-bs2048 --dist-port 8872 --mode neuralef --learning-rate 2.4 --alpha 0.01 --proj_dim 2048 2048 --no_stop_grad --no_proj_bn; python linear_probe.py --pretrained logs/neuralef-nosg-nobn-bs2048/final.pth
+    not converge
+
+    python main.py --batch-size 2032 --name neuralef-nosg-0lp-bs2048 --dist-port 8872 --mode neuralef --learning-rate 2.4 --alpha 0.01 --proj_dim 0 --no_stop_grad --no_last_bn; python linear_probe.py --pretrained logs/neuralef-nosg-0lp-bs2048/final.pth
+    not converge
+
+    python main.py --batch-size 2048 --name neuralef-nosg-nolbn-o8192-e200 --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.0025 --proj_dim 8192 8192 --no_stop_grad --no_last_bn  --epochs 200; python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-o8192-e200/final.pth
+    {"epoch": 99, "acc1": 70.268, "acc5": 89.332, "best_acc1": 70.292, "best_acc5": 89.374}
+
+    python main.py --batch-size 2048 --name neuralef-nosg-nolbn-o8192-e400 --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.0025 --proj_dim 8192 8192 --no_stop_grad --no_last_bn  --epochs 400; python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-o8192-e400/final.pth
+    {"epoch": 99, "acc1": 71.472, "acc5": 89.878, "best_acc1": 71.516, "best_acc5": 89.932}
+        python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-o8192-e400/final.pth --train-percent 10
+          {"epoch": 99, "acc1": 64.422, "acc5": 85.208, "best_acc1": 64.46, "best_acc5": 85.544}
+        python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-o8192-e400/final.pth --train-percent 1
+          {"epoch": 99, "acc1": 52.442, "acc5": 76.378, "best_acc1": 52.468, "best_acc5": 76.686}
+
+    python main.py --batch-size 2048 --name neuralef-nosg-nolbn-o8192-e1000 --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.0025 --proj_dim 8192 8192 --no_stop_grad --no_last_bn  --epochs 1000; python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-o8192-e1000/final.pth
 
 python main.py --batch-size 2032 --name simclr-bs2048 --dist-port 8872 --mode simclr --learning-rate 2.4 --proj_dim 2048 2048; python linear_probe.py --pretrained logs/simclr-bs2048/final.pth
     {"epoch": 99, "acc1": 64.29, "acc5": 86.124, "best_acc1": 64.3, "best_acc5": 86.162}
@@ -162,9 +208,14 @@ python main.py --batch-size 2032 --name simclr-bs2048 --dist-port 8872 --mode si
     CUDA_VISIBLE_DEVICES=0,1,2,3 python main.py --batch-size 256 --name simclr-bs256 --dist-port 8872 --mode simclr --learning-rate 0.3 --proj_dim 2048 2048; CUDA_VISIBLE_DEVICES=0,1,2,3 python linear_probe.py --pretrained logs/simclr-bs256/final.pth
     {"epoch": 99, "acc1": 59.004, "acc5": 82.226, "best_acc1": 59.05, "best_acc5": 82.296}
 
-    python main.py --batch-size 2032 --name simclr-o4096 --dist-port 8872 --mode simclr --learning-rate 2.4 --proj_dim 4096 4096; python linear_probe.py --pretrained logs/simclr-o4096/final.pth
+    srun python main.py --world-size $WORLD_SIZE --batch-size 4096 --name simclr-bs4096 --mode simclr --learning-rate 4.8 --proj_dim 2048 2048
+    {"epoch": 99, "acc1": 65.188, "acc5": 86.676, "best_acc1": 65.296, "best_acc5": 86.718}
 
-    python main.py --batch-size 2032 --name simclr-o8192 --dist-port 8872 --mode simclr --learning-rate 2.4 --proj_dim 8192 8192; python linear_probe.py --pretrained logs/simclr-o8192/final.pth
+    python main.py --batch-size 2000 --name simclr-o4096 --dist-port 8872 --mode simclr --learning-rate 2.4 --proj_dim 4096 4096; python linear_probe.py --pretrained logs/simclr-o4096/final.pth
+    {"epoch": 99, "acc1": 65.108, "acc5": 86.582, "best_acc1": 65.116, "best_acc5": 86.606}
+
+    python main.py --batch-size 2048 --name simclr-o8192 --dist-port 8872 --mode simclr --learning-rate 2.4 --proj_dim 8192 8192; python linear_probe.py --pretrained logs/simclr-o8192/final.pth
+    {"epoch": 99, "acc1": 65.302, "acc5": 86.824, "best_acc1": 65.396, "best_acc5": 86.854}
 
 python main.py --batch-size 2000 --name bt-bs2048 --dist-port 8872 --mode bt --learning-rate 2.4 --alpha 0.0051 --proj_dim 2048 2048 --scale-loss 0.024; python linear_probe.py --pretrained logs/bt-bs2048/final.pth
     {"epoch": 99, "acc1": 59.216, "acc5": 82.266, "best_acc1": 59.22, "best_acc5": 82.274}
@@ -182,9 +233,14 @@ python main.py --batch-size 2000 --name bt-bs2048 --dist-port 8872 --mode bt --l
     CUDA_VISIBLE_DEVICES=4,5,6,7 python main.py --batch-size 256 --name bt-bs256 --dist-port 8873 --mode bt --learning-rate 0.3 --alpha 0.0204 --proj_dim 2048 2048 --scale-loss 0.024; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/bt-bs256/final.pth
     {"epoch": 99, "acc1": 57.572, "acc5": 81.704, "best_acc1": 57.586, "best_acc5": 81.754}
 
-    python main.py --batch-size 2048 --name bt-o4096 --dist-port 8872 --mode bt --learning-rate 2.4 --alpha 0.0102 --proj_dim 4096 4096 --scale-loss 0.024; python linear_probe.py --pretrained logs/bt-o4096/final.pth
+    srun python main.py --world-size $WORLD_SIZE --batch-size 4096 --name bt-bs4096 --mode bt --learning-rate 4.8 --alpha 0.0204 --proj_dim 2048 2048 --scale-loss 0.024
+    {"epoch": 99, "acc1": 57.128, "acc5": 80.832, "best_acc1": 57.13, "best_acc5": 80.84}
+
+    python main.py --batch-size 2000 --name bt-o4096 --dist-port 8872 --mode bt --learning-rate 2.4 --alpha 0.0102 --proj_dim 4096 4096 --scale-loss 0.024; python linear_probe.py --pretrained logs/bt-o4096/final.pth
+    {"epoch": 99, "acc1": 63.852, "acc5": 85.7, "best_acc1": 63.866, "best_acc5": 85.744}
 
     python main.py --batch-size 2048 --name bt-o8192 --dist-port 8872 --mode bt --learning-rate 2.4 --alpha 0.0051 --proj_dim 8192 8192 --scale-loss 0.024; python linear_probe.py --pretrained logs/bt-o8192/final.pth
+    {"epoch": 99, "acc1": 66.238, "acc5": 87.058, "best_acc1": 66.282, "best_acc5": 87.1}
 
 python main.py --batch-size 2032 --name spectral-bs2048 --dist-port 8872 --mode spectral --learning-rate 2.4 --proj_dim 2048 2048; python linear_probe.py --pretrained logs/spectral-bs2048/final.pth
     {"epoch": 99, "acc1": 66.454, "acc5": 87.608, "best_acc1": 66.488, "best_acc5": 87.66}
@@ -202,8 +258,152 @@ python main.py --batch-size 2032 --name spectral-bs2048 --dist-port 8872 --mode 
     CUDA_VISIBLE_DEVICES=4,5,6,7 python main.py --batch-size 256 --name spectral-bs256 --dist-port 8872 --mode spectral --learning-rate 0.3 --proj_dim 2048 2048; CUDA_VISIBLE_DEVICES=4,5,6,7 python linear_probe.py --pretrained logs/spectral-bs256/final.pth
     {"epoch": 99, "acc1": 62.956, "acc5": 85.17, "best_acc1": 62.956, "best_acc5": 85.188}
 
+    srun python main.py --world-size $WORLD_SIZE --batch-size 4096 --name spectral-bs4096 --mode spectral --learning-rate 4.8 --proj_dim 2048 2048; python linear_probe.py --pretrained logs/spectral-bs4096/final.pth
+    {"epoch": 99, "acc1": 66.834, "acc5": 87.828, "best_acc1": 66.836, "best_acc5": 87.848}
+
     python main.py --batch-size 2048 --name spectral-o4096 --dist-port 8872 --mode spectral --learning-rate 2.4 --proj_dim 4096 4096; python linear_probe.py --pretrained logs/spectral-o4096/final.pth
     {"epoch": 99, "acc1": 67.07, "acc5": 87.644, "best_acc1": 67.098, "best_acc5": 87.662}
 
-    python main.py --batch-size 2048 --name spectral-o8192 --dist-port 8872 --mode spectral --learning-rate 2.4 --proj_dim 8192 8192; python linear_probe.py --pretrained logs/spectral-o8192/final.pth
-    epoch=20, step=13090, loss=nan, reg=nan, cls_loss=nan acc=0.0020, learning_rate=2.3141,
+    python main.py --batch-size 2048 --name spectral-o8192 --dist-port 8872 --mode spectral --learning-rate 1.2 --proj_dim 8192 8192; python linear_probe.py --pretrained logs/spectral-o8192/final.pth (tuned lr)
+    Nan
+
+
+
+--------------
+python convert-pretrain-to-detectron2.py moco_v2_200ep_pretrain.pth.tar output_moco.pkl
+python train_net.py --config-file configs/pascal_voc_R_50_C4_24k_moco.yaml --num-gpus 8 MODEL.WEIGHTS ./output_moco.pkl
+  total_loss: 0.3019
+  57.3856,82.2638,63.8503
+
+python convert-pretrain-to-detectron2.py ../logs/neuralef-nosg-nolbn-o8192-e200/final.pth output.pkl
+python train_net.py --config-file configs/pascal_voc_R_50_C4_24k_moco.yaml --num-gpus 8 MODEL.WEIGHTS ./output.pkl
+  SOLVER.BASE_LR 0.2  23.5890,42.1724,22.7172
+  SOLVER.BASE_LR 0.15 36.7445,63.8767,36.4257
+  SOLVER.BASE_LR 0.12 51.7849,80.5773,56.2403
+  SOLVER.BASE_LR 0.12 SOLVER.WEIGHT_DECAY 0.00001  38.2603,71.4469,36.1289
+  SOLVER.BASE_LR 0.11 50.4533,79.7118,54.5017
+  SOLVER.BASE_LR 0.1  49.1864,79.4234,52.2493
+  SOLVER.BASE_LR 0.08 46.6194,77.5297,49.0326
+  SOLVER.BASE_LR 0.05 37.8134,71.3366,34.9235
+  SOLVER.BASE_LR 0.02 29.0656,61.3742,23.1111
+
+python train_net.py --config-file configs/coco_R_50_C4_2x_moco.yaml --num-gpus 8 MODEL.WEIGHTS ./output.pkl
+  SOLVER.BASE_LR 0.02
+    copypaste: 36.0539,56.7731,38.4794,20.4815,41.0339,48.1511
+    copypaste: 31.8637,53.0803,33.4913,13.1908,35.4890,48.8765
+  SOLVER.BASE_LR 0.04
+    copypaste: 39.7548,59.6628,43.1126,22.1209,44.6946,53.9395
+    copypaste: 34.6995,56.4034,36.8821,15.3523,38.3663,52.5611
+  SOLVER.BASE_LR 0.05
+    copypaste: 39.9224,59.5558,43.4890,22.4730,45.0752,54.3234
+    copypaste: 34.8912,56.3255,37.3862,15.5964,38.6231,52.7767
+  SOLVER.BASE_LR 0.07
+               39.6562,59.1954,42.8000,22.9854,44.7214,53.3161
+               34.7156,56.0815,37.0469,15.5369,38.4260,51.5110
+  SOLVER.BASE_LR 0.1
+    copypaste: 39.1863,58.6099,42.6391,21.9717,43.9532,53.0947
+    copypaste: 34.3331,55.3525,36.8232,15.4327,37.7376,51.3695
+
+
+----------------------------
+
+g45
+
+python main_hash.py --batch-size 2024 --name temp --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.01 --proj_dim 2048 2048 --checkpoint-dir /home/zhijie/logs --t 30
+    56 ep
+     k: 4  mAP: 0.4965
+     k: 8  mAP: 0.5737
+     k: 16  mAP: 0.6392
+     k: 32  mAP: 0.6734
+     k: 64  mAP: 0.6946
+     k: 128  mAP: 0.7061
+     k: 256  mAP: 0.7101
+     k: 512  mAP: 0.7096
+     k: 1024  mAP: 0.7037
+     k: 2048  mAP: 0.6973
+
+     59 ep
+     k: 4  mAP: 0.4924
+     k: 8  mAP: 0.5726
+     k: 16  mAP: 0.6425
+     k: 32  mAP: 0.6770
+     k: 64  mAP: 0.6999
+     k: 128  mAP: 0.7102
+     k: 256  mAP: 0.7143
+     k: 512  mAP: 0.7119
+     k: 1024  mAP: 0.7057
+     k: 2048  mAP: 0.6996
+
+     78 ep
+     k: 4  mAP: 0.5009
+     k: 8  mAP: 0.5814
+     k: 16  mAP: 0.6558
+     k: 32  mAP: 0.6880
+     k: 64  mAP: 0.7055
+     k: 128  mAP: 0.7137
+     k: 256  mAP: 0.7175
+     k: 512  mAP: 0.7150
+     k: 1024  mAP: 0.7061
+     k: 2048  mAP: 0.6963
+
+     80 ep
+     k: 4  mAP: 0.5003
+     k: 8  mAP: 0.5825
+     k: 16  mAP: 0.6589
+     k: 32  mAP: 0.6925
+     k: 64  mAP: 0.7083
+     k: 128  mAP: 0.7174
+     k: 256  mAP: 0.7195
+     k: 512  mAP: 0.7168
+     k: 1024  mAP: 0.7073
+     k: 2048  mAP: 0.6980
+
+     93 ep
+     k: 4  mAP: 0.5030
+     k: 8  mAP: 0.5846
+     k: 16  mAP: 0.6639
+     k: 32  mAP: 0.6950
+     k: 64  mAP: 0.7123
+     k: 128  mAP: 0.7202
+     k: 256  mAP: 0.7221
+     k: 512  mAP: 0.7188
+     k: 1024  mAP: 0.7084
+     k: 2048  mAP: 0.6977
+
+python main_hash.py --batch-size 2024 --name hashing-r50-spectral --dist-port 8873 --mode spectral --learning-rate 2.4 --proj_dim 2048 2048 --checkpoint-dir /home/zhijie/logs --resume /home/zhijie/logs/hashing-r50-spectral/best_map.pth
+     k: 4  mAP: 0.4344
+     k: 8  mAP: 0.5389
+     k: 16  mAP: 0.6105
+     k: 32  mAP: 0.6584
+     k: 64  mAP: 0.6881
+     k: 128  mAP: 0.6986
+     k: 256  mAP: 0.7031
+     k: 512  mAP: 0.7038
+     k: 1024  mAP: 0.7057
+     k: 2048  mAP: 0.7059
+
+
+CUDA_VISIBLE_DEVICES=0 python main_hash.py --name moco --dist-port 8872 --baseline_moco logs/moco/moco_v2_200ep_pretrain.pth.tar
+    final and normalize:
+      k: 1  mAP: 0.3679
+      k: 2  mAP: 0.3720
+      k: 4  mAP: 0.4242
+      k: 8  mAP: 0.5160
+      k: 16  mAP: 0.6381
+      k: 32  mAP: 0.7069
+      k: 64  mAP: 0.7390
+      k: 128  mAP: 0.7450
+    else
+       k: 4  mAP: 0.3154
+       k: 8  mAP: 0.3457
+       k: 16  mAP: 0.3662
+       k: 32  mAP: 0.5213
+       k: 64  mAP: 0.5668
+       k: 128  mAP: 0.6035
+       k: 256  mAP: 0.6395
+       k: 512  mAP: 0.6725
+       k: 1024  mAP: 0.6688
+       k: 2048  mAP: 0.6920
+
+
+python main_hash.py --batch-size 2048 --name hashing-r50 --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.0025 --proj_dim 8192 8192 --t 10

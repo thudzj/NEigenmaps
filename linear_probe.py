@@ -49,7 +49,8 @@ parser.add_argument('--print-freq', default=100, type=int, metavar='N',
 def main():
     args = parser.parse_args()
     if args.train_percent in {1, 10}:
-        args.train_files = urllib.request.urlopen(f'https://raw.githubusercontent.com/google-research/simclr/master/imagenet_subsets/{args.train_percent}percent.txt').readlines()
+        with open(f'{args.train_percent}percent.txt') as f:
+            args.train_files = f.readlines()
     args.ngpus_per_node = torch.cuda.device_count()
 
     if os.path.exists('/data/LargeData/Large/ImageNet'):
@@ -128,10 +129,10 @@ def main_worker(gpu, args):
     if args.train_percent in {1, 10}:
         train_dataset.samples = []
         for fname in args.train_files:
-            fname = fname.decode().strip()
+            fname = fname.strip()
             cls = fname.split('_')[0]
             train_dataset.samples.append(
-                (traindir / cls / fname, train_dataset.class_to_idx[cls]))
+                (os.path.join(traindir, cls, fname), train_dataset.class_to_idx[cls]))
 
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     kwargs = dict(batch_size=args.batch_size // args.world_size, num_workers=args.workers, pin_memory=True)

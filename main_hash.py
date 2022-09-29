@@ -22,6 +22,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 from utils import *
 
+from retrieval import retrieval
+
 parser = argparse.ArgumentParser(description='Training')
 parser.add_argument('--data', type=str, metavar='DIR',
                     help='path to dataset')
@@ -48,17 +50,17 @@ parser.add_argument('--mode', type=str, default="baseline",
                     help="project type")
 parser.add_argument('--name', type=str, default='default')
 parser.add_argument('--resume', type=str, default=None)
+parser.add_argument('--model', type=str, default='resnet50')
 
 parser.add_argument('--alpha', default=1, type=float)
 parser.add_argument('--proj_dim', default=[2048, 128], type=int, nargs='+')
 parser.add_argument('--no_proj_bn', default=False, action='store_true')
 parser.add_argument('--t', default=10, type=float)
+parser.add_argument('--end_lr', default=None, type=float)
 
-# for ablation
-parser.add_argument('--no_stop_grad', default=False, action='store_true')
-parser.add_argument('--l2_normalize', default=False, action='store_true')
-parser.add_argument('--not_all_together', default=False, action='store_true')
-parser.add_argument('--positive_def', default=False, action='store_true')
+parser.add_argument('--baseline_moco', default=None, type=str)
+parser.add_argument('--coco_dir', default='/home/zhijie/data/train2014', type=str)
+
 
 # Dist
 parser.add_argument('--world-size', default=1, type=int,
@@ -114,6 +116,23 @@ def main_worker(gpu, args):
     torch.cuda.set_device(gpu)
     torch.backends.cudnn.benchmark = True
 
+    if args.baseline_moco:
+        model = getattr(torchvision.models, args.model)()#.cuda(gpu)
+        state_dict = torch.load(args.baseline_moco, map_location='cpu')
+        if 0:
+            missing_keys, unexpected_keys = model.load_state_dict({k.replace("module.encoder_q.", ""): v for k, v in state_dict['state_dict'].items()}, strict=False)
+            assert missing_keys == ['fc.weight', 'fc.bias'] and unexpected_keys == ['fc.0.weight', 'fc.0.bias', 'fc.2.weight', 'fc.2.bias']
+            model.fc = nn.Identity()
+            l2_normalize = False
+        else:
+            model.fc = nn.Sequential(nn.Linear(2048, 2048), nn.ReLU(), nn.Linear(2048, 128))
+            model.load_state_dict({k.replace("module.encoder_q.", ""): v for k, v in state_dict['state_dict'].items()}, strict=True)
+            l2_normalize = True
+
+        model.eval()
+        retrieval(args.coco_dir, torch.device("cpu"), model, 256, log_dir=args.log_dir, subset=None, l2_normalize=l2_normalize)
+        exit()
+
     if args.mode == 'neuralef':
         model = NeuralEFCLR(args).cuda(gpu)
     elif args.mode == 'bt':
@@ -139,9 +158,15 @@ def main_worker(gpu, args):
             else:
                 assert False
         ckpt = torch.load(args.resume, map_location='cpu')
-        start_epoch = ckpt['epoch']
+        if 'epoch' in ckpt:
+            start_epoch = ckpt['epoch']
         model.load_state_dict(ckpt['model'])
-        optimizer.load_state_dict(ckpt['optimizer'])
+        if 'optimizer' in ckpt:
+            optimizer.load_state_dict(ckpt['optimizer'])
+        # if args.rank == 0:
+        #     model.eval()
+        #     retrieval(args.coco_dir, model.device, model.module.inference, 256, log_dir=args.log_dir, subset=None)
+        #     exit()
     else:
         start_epoch = 0
 
@@ -161,13 +186,20 @@ def main_worker(gpu, args):
     start_time = time.time()
     scaler = torch.cuda.amp.GradScaler()
 
+    # if args.rank == 0:
+    #     model.eval()
+    #     retrieval(args.coco_dir, model.device, model.module.inference, 256, log_dir=args.log_dir, subset=None)
+
+    best_map = 0
     for epoch in range(start_epoch, args.epochs):
         sampler.set_epoch(epoch)
+
+        torch.distributed.barrier()
 
         for step, ((y1, y2), labels) in enumerate(loader, start=epoch * len(loader)):
             y1 = y1.cuda(gpu, non_blocking=True)
             y2 = y2.cuda(gpu, non_blocking=True)
-            lr = adjust_learning_rate(args, optimizer, loader, step)
+            lr = adjust_learning_rate(args, optimizer, loader, step, end_lr=args.end_lr)
 
             optimizer.zero_grad()
             with torch.cuda.amp.autocast():
@@ -196,6 +228,15 @@ def main_worker(gpu, args):
                     writer.add_scalar('Accuracy/train', acc.item(), step)
                     writer.add_scalar('Hparams/lr', lr, step)
 
+        if args.rank == 0:
+            model.eval()
+            maps = retrieval(args.coco_dir, model.device, model.module.inference, 256, log_dir=args.log_dir, subset=None)
+            if maps[-3] > best_map:
+                best_map = maps[-3]
+                print("epoch", epoch, 'best_map', best_map)
+                torch.save(dict(model=model.state_dict()), os.path.join(args.checkpoint_dir, 'best_map.pth'))
+            model.train()
+
         if args.rank == 0 and epoch % 10 == 9:
             # save checkpoint
             state = dict(epoch=epoch + 1, model=model.state_dict(),
@@ -209,18 +250,22 @@ def main_worker(gpu, args):
                         head=model.module.online_head.state_dict()),
                 os.path.join(args.checkpoint_dir, 'final.pth'))
 
-class directCLR(nn.Module):
+    if args.rank == 0:
+        model.eval()
+        retrieval(args.coco_dir, model.device, model.module.inference, 256, log_dir=args.log_dir, subset=None)
+
+class NeuralEFCLR(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        self.backbone = torchvision.models.resnet50(zero_init_residual=True)
-        self.backbone.fc = nn.Identity()
+        self.backbone = getattr(torchvision.models, args.model)(zero_init_residual=True)
+        self.online_head = nn.Linear(self.backbone.fc.in_features, 1000)
 
-        self.online_head = nn.Linear(2048, 1000)
-
-        if self.args.mode == "simclr":
+        if args.proj_dim[0] == 0:
+            self.projector = nn.Identity()
+        else:
             if len(args.proj_dim) > 1:
-                sizes = [2048,] + args.proj_dim
+                sizes = [self.backbone.fc.in_features,] + args.proj_dim
                 layers = []
                 for i in range(len(sizes) - 2):
                     layers.append(nn.Linear(sizes[i], sizes[i + 1], bias=False))
@@ -234,190 +279,40 @@ class directCLR(nn.Module):
             elif len(args.proj_dim) == 1:
                 self.projector = nn.Linear(2048, args.proj_dim[0], bias=True)
 
-        if args.rank == 0 and hasattr(self, 'projector'):
-            print(self.projector)
-
-    def forward(self, y1, y2, labels):
-        r1 = self.backbone(y1)
-        r2 = self.backbone(y2)
-
-        if self.args.mode == "baseline":
-            z1 = r1
-            z2 = r2
-        elif self.args.mode == "directclr":
-            z1 = r1[:, :self.args.dim]
-            z2 = r2[:, :self.args.dim]
-        elif self.args.mode == "simclr":
-            z1 = self.projector(r1)
-            z2 = self.projector(r2)
-
-        loss = infoNCE(z1, z2) / 2 + infoNCE(z2, z1) / 2
-
-        logits = self.online_head(r1.detach())
-        cls_loss = F.cross_entropy(logits, labels)
-        acc = torch.sum(torch.eq(torch.argmax(logits, dim=1), labels)) / logits.size(0)
-        return loss, torch.zeros_like(loss), cls_loss, acc
-
-def infoNCE(nn, p, temperature=0.1):
-    nn = F.normalize(nn, dim=1)
-    p = F.normalize(p, dim=1)
-    nn = gather_from_all(nn)
-    p = gather_from_all(p)
-    logits = nn @ p.T
-    logits /= temperature
-    n = p.shape[0]
-    labels = torch.arange(0, n, dtype=torch.long).cuda()
-    loss = F.cross_entropy(logits, labels)
-    return loss
-
-class NeuralEFCLR(nn.Module):
-    def __init__(self, args):
-        super().__init__()
-        self.args = args
-        self.backbone = torchvision.models.resnet50(zero_init_residual=True)
         self.backbone.fc = nn.Identity()
 
-        self.online_head = nn.Linear(2048, 1000)
-
-        if args.proj_dim[0] == 0:
-            self.projector = nn.Identity()
-        else:
-            if len(args.proj_dim) > 1:
-                sizes = [2048,] + args.proj_dim
-                layers = []
-                for i in range(len(sizes) - 2):
-                    layers.append(nn.Linear(sizes[i], sizes[i + 1], bias=False))
-                    if args.proj_bn:
-                        layers.append(nn.BatchNorm1d(sizes[i+1]))
-                    layers.append(nn.ReLU(inplace=True))
-
-                layers.append(nn.Linear(sizes[-2], sizes[-1], bias=True))
-
-                self.projector = nn.Sequential(*layers)
-            elif len(args.proj_dim) == 1:
-                self.projector = nn.Linear(2048, args.proj_dim[0], bias=True)
-
         if args.rank == 0 and hasattr(self, 'projector'):
+            print(self.backbone)
             print(self.projector)
 
-    def forward(self, y1, y2, labels=None):
-        if self.args.not_all_together:
-            r1 = self.backbone(y1)
-            r2 = self.backbone(y2)
+    def inference(self, y, k=None):
+        codes = hash_layer(self.projector(self.backbone(y)).sigmoid() - 0.5)
+        if k == None:
+            k = codes.shape[-1]
+        return codes[...,:k]
 
-            z1 = self.projector(r1)
-            z2 = self.projector(r2)
-        else:
-            r1, r2 = self.backbone(torch.cat([y1, y2], 0)).chunk(2, dim=0)
-            z1, z2 = self.projector(torch.cat([r1, r2], 0)).chunk(2, dim=0)
+    def forward(self, y1, y2, labels=None):
+
+        r1, r2 = self.backbone(torch.cat([y1, y2], 0)).chunk(2, dim=0)
+        z1, z2 = hash_layer(self.projector(torch.cat([r1, r2], 0)).sigmoid() - 0.5).chunk(2, dim=0)
 
         psi1 = gather_from_all(z1)
         psi2 = gather_from_all(z2)
 
-        if self.args.l2_normalize:
-            psi1 = F.normalize(psi1, dim=1) * math.sqrt(self.args.t)
-            psi2 = F.normalize(psi2, dim=1) * math.sqrt(self.args.t)
-        else:
-            if self.args.not_all_together:
-                psi1 = psi1.div(psi1.norm(dim=0).clamp(min=1e-6)) * math.sqrt(self.args.t)
-                psi2 = psi2.div(psi2.norm(dim=0).clamp(min=1e-6)) * math.sqrt(self.args.t)
-            else:
-                norm_ = (psi1.norm(dim=0) ** 2 + psi2.norm(dim=0) ** 2).sqrt().clamp(min=1e-6)
-                psi1 = psi1.div(norm_) * math.sqrt(2 * self.args.t)
-                psi2 = psi2.div(norm_) * math.sqrt(2 * self.args.t)
+        norm_ = (psi1.norm(dim=0) ** 2 + psi2.norm(dim=0) ** 2).sqrt().clamp(min=1e-6)
+        psi1 = psi1.div(norm_) * math.sqrt(2 * self.args.t)
+        psi2 = psi2.div(norm_) * math.sqrt(2 * self.args.t)
 
-        if self.args.positive_def:
-            psi1 /= math.sqrt(2)
-            psi2 /= math.sqrt(2)
+        psi_K_psi_diag = (psi1 * psi2).sum(0).view(-1, 1)
+        psi2_d_K_psi1 = psi2.detach().T @ psi1
+        psi1_d_K_psi2 = psi1.detach().T @ psi2
 
-            psi_K_psi_diag = (psi1 * psi2 * 2 + psi1 * psi1 + psi2 * psi2).sum(0).view(-1, 1)
-            if self.args.no_stop_grad:
-                psi_K_psi = (psi1.T + psi2.T) @ (psi1 + psi2)
-            else:
-                psi_K_psi = (psi1.detach().T + psi2.detach().T) @ (psi1 + psi2)
-
-            loss = - psi_K_psi_diag.sum()
-            reg = ((psi_K_psi) ** 2).triu(1).sum()
-        else:
-            psi_K_psi_diag = (psi1 * psi2).sum(0).view(-1, 1)
-            if self.args.no_stop_grad:
-                psi2_d_K_psi1 = psi2.T @ psi1
-                psi1_d_K_psi2 = psi1.T @ psi2
-            else:
-                psi2_d_K_psi1 = psi2.detach().T @ psi1
-                psi1_d_K_psi2 = psi1.detach().T @ psi2
-
-            loss = - psi_K_psi_diag.sum() * 2
-            reg = ((psi2_d_K_psi1) ** 2).triu(1).sum() \
-                + ((psi1_d_K_psi2) ** 2).triu(1).sum()
+        loss = - psi_K_psi_diag.sum() * 2
+        reg = ((psi2_d_K_psi1) ** 2).triu(1).sum() \
+            + ((psi1_d_K_psi2) ** 2).triu(1).sum()
 
         loss /= psi_K_psi_diag.numel()
         reg /= psi_K_psi_diag.numel()
-
-        logits = self.online_head(r1.detach())
-        cls_loss = F.cross_entropy(logits, labels)
-        acc = torch.sum(torch.eq(torch.argmax(logits, dim=1), labels)) / logits.size(0)
-        return loss, reg, cls_loss, acc
-
-
-def off_diagonal(x):
-    # return a flattened view of the off-diagonal elements of a square matrix
-    n, m = x.shape
-    assert n == m
-    return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
-
-
-class BarlowTwins(nn.Module):
-    def __init__(self, args):
-        super().__init__()
-        self.args = args
-        self.backbone = torchvision.models.resnet50(zero_init_residual=True)
-        self.backbone.fc = nn.Identity()
-
-        self.online_head = nn.Linear(2048, 1000)
-
-        # projector
-        if args.proj_dim[0] == 0:
-            self.projector = nn.Identity()
-        else:
-            if len(args.proj_dim) > 1:
-                sizes = [2048,] + args.proj_dim
-                layers = []
-                for i in range(len(sizes) - 2):
-                    layers.append(nn.Linear(sizes[i], sizes[i + 1], bias=False))
-                    if args.proj_bn:
-                        layers.append(nn.BatchNorm1d(sizes[i+1]))
-                    layers.append(nn.ReLU(inplace=True))
-                layers.append(nn.Linear(sizes[-2], sizes[-1], bias=False))
-                self.projector = nn.Sequential(*layers)
-            elif len(args.proj_dim) == 1:
-                self.projector = nn.Linear(2048, args.proj_dim[0], bias=True)
-
-        if args.rank == 0 and hasattr(self, 'projector'):
-            print(self.projector)
-
-        # normalization layer for the representations z1 and z2
-        self.bn = nn.BatchNorm1d(sizes[-1], affine=False)
-
-    def forward(self, y1, y2, labels=None):
-        r1 = self.backbone(y1)
-        r2 = self.backbone(y2)
-        z1 = self.projector(r1)
-        z2 = self.projector(r2)
-
-        # empirical cross-correlation matrix
-        c = self.bn(z1).T @ self.bn(z2)
-
-        # sum the cross-correlation matrix between all gpus
-        c.div_(self.args.batch_size)
-        torch.distributed.all_reduce(c)
-
-        # use --scale-loss to multiply the loss by a constant factor
-        # see the Issues section of the readme
-        on_diag = torch.diagonal(c).add_(-1).pow_(2).sum().mul(self.args.scale_loss)
-        off_diag = off_diagonal(c).pow_(2).sum().mul(self.args.scale_loss)
-        loss = on_diag
-        reg = off_diag
 
         logits = self.online_head(r1.detach())
         cls_loss = F.cross_entropy(logits, labels)
@@ -454,11 +349,17 @@ class SpectralCLR(nn.Module):
         if args.rank == 0 and hasattr(self, 'projector'):
             print(self.projector)
 
+    def inference(self, y, k=None):
+        codes = hash_layer(self.projector(self.backbone(y)).sigmoid() - 0.5)
+        if k == None:
+            k = codes.shape[-1]
+        return codes[...,:k]
+
     def forward(self, y1, y2, labels=None):
         r1 = self.backbone(y1)
         r2 = self.backbone(y2)
-        z1 = self.projector(r1)
-        z2 = self.projector(r2)
+        z1 = hash_layer(self.projector(r1).sigmoid() - 0.5) # self.projector(r1)
+        z2 = hash_layer(self.projector(r2).sigmoid() - 0.5) #self.projector(r2)
 
         z1 = F.normalize(z1, dim=1) * math.sqrt(self.args.t)
         z2 = F.normalize(z2, dim=1) * math.sqrt(self.args.t)
@@ -475,6 +376,18 @@ class SpectralCLR(nn.Module):
         cls_loss = F.cross_entropy(logits, labels)
         acc = torch.sum(torch.eq(torch.argmax(logits, dim=1), labels)) / logits.size(0)
         return loss, reg, cls_loss, acc
+
+class hash(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input):
+        return torch.sign(input)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return grad_output
+
+def hash_layer(input):
+    return hash.apply(input)
 
 if __name__ == '__main__':
     main()
