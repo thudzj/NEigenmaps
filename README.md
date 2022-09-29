@@ -22,6 +22,7 @@ python main_hash.py --data /path/to/imagenet/ --batch-size 2024 --name hashing -
 ### Evaluation in node property prediction
 Training:
 ```
+cd graph; 
 python main_products.py --root /path/to/ogbn --device 3 --model res_mlp --hidden_channels 2048 --num_layers 12 --proj_dim 8192 8192 --alpha 0.3 --lr 0.3 --weight_decay 0 --batch_size 16384 --epochs 20 {--no_stop_grad} --output_dir logs/products_al.3_lr.3_w2048{_nosg}; 
 ```
 
