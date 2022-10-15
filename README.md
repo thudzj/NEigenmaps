@@ -14,9 +14,9 @@ python convert-pretrain-to-detectron2.py ../logs/our/final.pth output.pkl
 python train_net.py --config-file configs/coco_R_50_C4_2x_moco.yaml --num-gpus 8 MODEL.WEIGHTS ./output.pkl SOLVER.BASE_LR 0.05
 ```
 
-Perform spectral hashing
+Perform image retrieval
 ```
-python main_hash.py --data /path/to/imagenet/ --batch-size 2024 --name hashing --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.01 --proj_dim 2048 2048 --t 30
+python test_hashing.py --name neuralef-nolbn-o4096 --mode neuralef --proj_dim 4096 4096 --resume auto
 ```
 
 ### Evaluation in node property prediction
