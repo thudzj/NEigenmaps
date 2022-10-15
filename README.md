@@ -16,7 +16,7 @@ python train_net.py --config-file configs/coco_R_50_C4_2x_moco.yaml --num-gpus 8
 
 Perform image retrieval
 ```
-python test_hashing.py --name neuralef-nolbn-o4096 --mode neuralef --proj_dim 4096 4096 --resume auto
+python test_retrieval.py --name neuralef-nolbn-o4096 --mode neuralef --proj_dim 4096 4096 --resume auto
 ```
 
 ### Evaluation in node property prediction
