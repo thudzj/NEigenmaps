@@ -52,14 +52,18 @@ parser.add_argument('--name', type=str, default='default')
 parser.add_argument('--resume', type=str, default=None)
 parser.add_argument('--model', type=str, default='resnet50')
 
+parser.add_argument('--no_stop_grad', default=False, action='store_true')
 parser.add_argument('--alpha', default=1, type=float)
 parser.add_argument('--proj_dim', default=[2048, 128], type=int, nargs='+')
 parser.add_argument('--no_proj_bn', default=False, action='store_true')
+parser.add_argument('--no_last_bn', default=False, action='store_true')
 parser.add_argument('--t', default=10, type=float)
 parser.add_argument('--end_lr', default=None, type=float)
 
-parser.add_argument('--baseline_moco', default=None, type=str)
 parser.add_argument('--coco_dir', default='/home/zhijie/data/train2014', type=str)
+parser.add_argument('--coco_db_path', default='/home/zhijie/data/coco_DB.txt', type=str)
+parser.add_argument('--coco_query_path', default='/home/zhijie/data/coco_Query.txt', type=str)
+parser.add_argument('--nuswide_dir', default='/home/zhijie/data/nuswide_images', type=str)
 
 
 # Dist
@@ -116,23 +120,6 @@ def main_worker(gpu, args):
     torch.cuda.set_device(gpu)
     torch.backends.cudnn.benchmark = True
 
-    if args.baseline_moco:
-        model = getattr(torchvision.models, args.model)()#.cuda(gpu)
-        state_dict = torch.load(args.baseline_moco, map_location='cpu')
-        if 0:
-            missing_keys, unexpected_keys = model.load_state_dict({k.replace("module.encoder_q.", ""): v for k, v in state_dict['state_dict'].items()}, strict=False)
-            assert missing_keys == ['fc.weight', 'fc.bias'] and unexpected_keys == ['fc.0.weight', 'fc.0.bias', 'fc.2.weight', 'fc.2.bias']
-            model.fc = nn.Identity()
-            l2_normalize = False
-        else:
-            model.fc = nn.Sequential(nn.Linear(2048, 2048), nn.ReLU(), nn.Linear(2048, 128))
-            model.load_state_dict({k.replace("module.encoder_q.", ""): v for k, v in state_dict['state_dict'].items()}, strict=True)
-            l2_normalize = True
-
-        model.eval()
-        retrieval(args.coco_dir, torch.device("cpu"), model, 256, log_dir=args.log_dir, subset=None, l2_normalize=l2_normalize)
-        exit()
-
     if args.mode == 'neuralef':
         model = NeuralEFCLR(args).cuda(gpu)
     elif args.mode == 'bt':
@@ -163,10 +150,12 @@ def main_worker(gpu, args):
         model.load_state_dict(ckpt['model'])
         if 'optimizer' in ckpt:
             optimizer.load_state_dict(ckpt['optimizer'])
-        # if args.rank == 0:
-        #     model.eval()
-        #     retrieval(args.coco_dir, model.device, model.module.inference, 256, log_dir=args.log_dir, subset=None)
-        #     exit()
+        if args.rank == 0:
+            model.eval()
+            retrieval(args.nuswide_dir, '/home/zhijie/data/nuswide_m_DB.txt', '/home/zhijie/data/nuswide_m_Query.txt', model.device, model.module.inference, 256, dname='nuswide_m', log_dir=args.log_dir, subset=None)
+            retrieval(args.data, '/home/zhijie/data/imagenet_DB.txt', '/home/zhijie/data/imagenet_Query.txt', model.device, model.module.inference, 256, dname='imagenet', log_dir=args.log_dir, subset=None)
+            retrieval(args.coco_dir, args.coco_db_path, args.coco_query_path, model.device, model.module.inference, 256, log_dir=args.log_dir, subset=None)
+            exit()
     else:
         start_epoch = 0
 
@@ -185,10 +174,6 @@ def main_worker(gpu, args):
 
     start_time = time.time()
     scaler = torch.cuda.amp.GradScaler()
-
-    # if args.rank == 0:
-    #     model.eval()
-    #     retrieval(args.coco_dir, model.device, model.module.inference, 256, log_dir=args.log_dir, subset=None)
 
     best_map = 0
     for epoch in range(start_epoch, args.epochs):
@@ -230,7 +215,7 @@ def main_worker(gpu, args):
 
         if args.rank == 0:
             model.eval()
-            maps = retrieval(args.coco_dir, model.device, model.module.inference, 256, log_dir=args.log_dir, subset=None)
+            maps = retrieval(args.coco_dir, args.coco_db_path, args.coco_query_path, model.device, model.module.inference, 256, log_dir=args.log_dir, subset=0)
             if maps[-3] > best_map:
                 best_map = maps[-3]
                 print("epoch", epoch, 'best_map', best_map)
@@ -252,7 +237,9 @@ def main_worker(gpu, args):
 
     if args.rank == 0:
         model.eval()
-        retrieval(args.coco_dir, model.device, model.module.inference, 256, log_dir=args.log_dir, subset=None)
+        retrieval(args.nuswide_dir, '/home/zhijie/data/nuswide_m_DB.txt', '/home/zhijie/data/nuswide_m_Query.txt', model.device, model.module.inference, 256, dname='nuswide_m', log_dir=args.log_dir, subset=None)
+        retrieval(args.data, '/home/zhijie/data/imagenet_DB.txt', '/home/zhijie/data/imagenet_Query.txt', model.device, model.module.inference, 256, dname='imagenet', log_dir=args.log_dir, subset=None)
+        retrieval(args.coco_dir, args.coco_db_path, args.coco_query_path, model.device, model.module.inference, 256, log_dir=args.log_dir, subset=None)
 
 class NeuralEFCLR(nn.Module):
     def __init__(self, args):
@@ -273,7 +260,7 @@ class NeuralEFCLR(nn.Module):
                         layers.append(nn.BatchNorm1d(sizes[i+1]))
                     layers.append(nn.ReLU(inplace=True))
                 layers.append(nn.Linear(sizes[-2], sizes[-1], bias=False))
-                if args.proj_bn:
+                if not args.no_last_bn and args.proj_bn:
                     layers.append(nn.BatchNorm1d(sizes[-1]))
                 self.projector = nn.Sequential(*layers)
             elif len(args.proj_dim) == 1:
@@ -299,13 +286,19 @@ class NeuralEFCLR(nn.Module):
         psi1 = gather_from_all(z1)
         psi2 = gather_from_all(z2)
 
-        norm_ = (psi1.norm(dim=0) ** 2 + psi2.norm(dim=0) ** 2).sqrt().clamp(min=1e-6)
+        norm_ = (psi1.norm(dim=0) ** 2 + psi2.norm(dim=0) ** 2).sqrt().clamp(min=1e-6) #math.sqrt(self.args.batch_size * 2) #
+        # if self.args.rank == 0:
+            # print((psi1 ** 2).sum(0), (psi2 ** 2).sum(0), norm_)
         psi1 = psi1.div(norm_) * math.sqrt(2 * self.args.t)
         psi2 = psi2.div(norm_) * math.sqrt(2 * self.args.t)
 
         psi_K_psi_diag = (psi1 * psi2).sum(0).view(-1, 1)
-        psi2_d_K_psi1 = psi2.detach().T @ psi1
-        psi1_d_K_psi2 = psi1.detach().T @ psi2
+        if self.args.no_stop_grad:
+            psi2_d_K_psi1 = psi2.T @ psi1
+            psi1_d_K_psi2 = psi1.T @ psi2
+        else:
+            psi2_d_K_psi1 = psi2.detach().T @ psi1
+            psi1_d_K_psi2 = psi1.detach().T @ psi2
 
         loss = - psi_K_psi_diag.sum() * 2
         reg = ((psi2_d_K_psi1) ** 2).triu(1).sum() \

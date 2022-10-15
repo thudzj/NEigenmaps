@@ -163,6 +163,8 @@ python main.py --batch-size 2048 --name neuralef-bs2048 --dist-port 8872 --mode 
     python main.py --batch-size 2048 --name neuralef-nosg-nolbn-o4096 --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.005 --proj_dim 4096 4096 --no_stop_grad --no_last_bn; python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-o4096/final.pth
     {"epoch": 99, "acc1": 67.716, "acc5": 87.838, "best_acc1": 67.75, "best_acc5": 87.864}
 
+        python main.py --batch-size 2050 --name neuralef-nolbn-o4096 --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.005 --proj_dim 4096 4096 --no_last_bn --data /workspace/home/fanbao/datasets/ImageNet; CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python linear_probe.py --pretrained logs/neuralef-nolbn-o4096/final.pth --data /workspace/home/fanbao/datasets/ImageNet
+
     python main.py --batch-size 2048 --name neuralef-nosg-nolbn-o8192 --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.0025 --proj_dim 8192 8192 --no_stop_grad --no_last_bn; python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-o8192/final.pth
     {"epoch": 99, "acc1": 68.42, "acc5": 88.128, "best_acc1": 68.422, "best_acc5": 88.128}
         python linear_probe.py --pretrained logs/neuralef-nosg-nolbn-o8192/final.pth --train-percent 10
@@ -309,101 +311,221 @@ python train_net.py --config-file configs/coco_R_50_C4_2x_moco.yaml --num-gpus 8
 
 g45
 
-python main_hash.py --batch-size 2024 --name temp --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.01 --proj_dim 2048 2048 --checkpoint-dir /home/zhijie/logs --t 30
-    56 ep
-     k: 4  mAP: 0.4965
-     k: 8  mAP: 0.5737
-     k: 16  mAP: 0.6392
-     k: 32  mAP: 0.6734
-     k: 64  mAP: 0.6946
-     k: 128  mAP: 0.7061
-     k: 256  mAP: 0.7101
-     k: 512  mAP: 0.7096
-     k: 1024  mAP: 0.7037
-     k: 2048  mAP: 0.6973
 
-     59 ep
-     k: 4  mAP: 0.4924
-     k: 8  mAP: 0.5726
-     k: 16  mAP: 0.6425
-     k: 32  mAP: 0.6770
-     k: 64  mAP: 0.6999
-     k: 128  mAP: 0.7102
-     k: 256  mAP: 0.7143
-     k: 512  mAP: 0.7119
-     k: 1024  mAP: 0.7057
-     k: 2048  mAP: 0.6996
-
-     78 ep
-     k: 4  mAP: 0.5009
-     k: 8  mAP: 0.5814
-     k: 16  mAP: 0.6558
-     k: 32  mAP: 0.6880
-     k: 64  mAP: 0.7055
-     k: 128  mAP: 0.7137
-     k: 256  mAP: 0.7175
-     k: 512  mAP: 0.7150
-     k: 1024  mAP: 0.7061
-     k: 2048  mAP: 0.6963
-
-     80 ep
-     k: 4  mAP: 0.5003
-     k: 8  mAP: 0.5825
-     k: 16  mAP: 0.6589
-     k: 32  mAP: 0.6925
-     k: 64  mAP: 0.7083
-     k: 128  mAP: 0.7174
-     k: 256  mAP: 0.7195
-     k: 512  mAP: 0.7168
-     k: 1024  mAP: 0.7073
-     k: 2048  mAP: 0.6980
-
-     93 ep
-     k: 4  mAP: 0.5030
-     k: 8  mAP: 0.5846
-     k: 16  mAP: 0.6639
-     k: 32  mAP: 0.6950
-     k: 64  mAP: 0.7123
-     k: 128  mAP: 0.7202
-     k: 256  mAP: 0.7221
-     k: 512  mAP: 0.7188
-     k: 1024  mAP: 0.7084
-     k: 2048  mAP: 0.6977
-
-python main_hash.py --batch-size 2024 --name hashing-r50-spectral --dist-port 8873 --mode spectral --learning-rate 2.4 --proj_dim 2048 2048 --checkpoint-dir /home/zhijie/logs --resume /home/zhijie/logs/hashing-r50-spectral/best_map.pth
-     k: 4  mAP: 0.4344
-     k: 8  mAP: 0.5389
-     k: 16  mAP: 0.6105
-     k: 32  mAP: 0.6584
-     k: 64  mAP: 0.6881
-     k: 128  mAP: 0.6986
-     k: 256  mAP: 0.7031
-     k: 512  mAP: 0.7038
-     k: 1024  mAP: 0.7057
-     k: 2048  mAP: 0.7059
+CUDA_VISIBLE_DEVICES=2 python test_hashing.py --name neuralef-nosg-nolbn-o8192 --mode neuralef --proj_dim 8192 8192 --resume auto
 
 
-CUDA_VISIBLE_DEVICES=0 python main_hash.py --name moco --dist-port 8872 --baseline_moco logs/moco/moco_v2_200ep_pretrain.pth.tar
-    final and normalize:
-      k: 1  mAP: 0.3679
-      k: 2  mAP: 0.3720
-      k: 4  mAP: 0.4242
-      k: 8  mAP: 0.5160
-      k: 16  mAP: 0.6381
-      k: 32  mAP: 0.7069
-      k: 64  mAP: 0.7390
-      k: 128  mAP: 0.7450
-    else
-       k: 4  mAP: 0.3154
-       k: 8  mAP: 0.3457
-       k: 16  mAP: 0.3662
-       k: 32  mAP: 0.5213
-       k: 64  mAP: 0.5668
-       k: 128  mAP: 0.6035
-       k: 256  mAP: 0.6395
-       k: 512  mAP: 0.6725
-       k: 1024  mAP: 0.6688
-       k: 2048  mAP: 0.6920
+CUDA_VISIBLE_DEVICES=0 python test_hashing.py --name neuralef-nolbn-o8192 --mode neuralef --proj_dim 8192 8192 --resume auto --dist-port 8873
+
+CUDA_VISIBLE_DEVICES=1 python test_hashing.py --name neuralef-nolbn-o4096 --mode neuralef --proj_dim 4096 4096 --resume auto --dist-port 8874
+
+CUDA_VISIBLE_DEVICES=2 python test_hashing.py --name neuralef-nosg-nolbn-o4096 --mode neuralef --proj_dim 4096 4096 --resume auto --dist-port 8875  --random_runs 10
+
+CUDA_VISIBLE_DEVICES=3 python test_hashing.py --name spectral-o4096 --mode spectral --proj_dim 4096 4096 --resume auto --dist-port 8876  --random_runs 10
 
 
-python main_hash.py --batch-size 2048 --name hashing-r50 --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.0025 --proj_dim 8192 8192 --t 10
+CUDA_VISIBLE_DEVICES=4 python test_hashing.py --name neuralef-nolbn-o8192 --mode neuralef --proj_dim 8192 8192 --resume auto --dist-port 8973
+
+CUDA_VISIBLE_DEVICES=5 python test_hashing.py --name neuralef-nolbn-o4096 --mode neuralef --proj_dim 4096 4096 --resume auto --dist-port 8974
+
+CUDA_VISIBLE_DEVICES=6 python test_hashing.py --name neuralef-nosg-nolbn-o4096 --mode neuralef --proj_dim 4096 4096 --resume auto --dist-port 8975  --random_runs 10
+
+CUDA_VISIBLE_DEVICES=7 python test_hashing.py --name spectral-o4096 --mode spectral --proj_dim 4096 4096 --resume auto --dist-port 8976  --random_runs 10
+
+
+----------the following not used -------------
+
+python main_hash.py --batch-size 1920 --name hashing-our --dist-port 8873 --mode neuralef --learning-rate 2.25 --alpha 0.005 --proj_dim 4096 4096 --checkpoint-dir /home/zhijie/logs/ --epochs 50
+k: 4  mAP: 0.4051  mean_P: 0.4012
+   k: 8  mAP: 0.5285  mean_P: 0.5173
+   k: 16  mAP: 0.6282  mean_P: 0.5878
+   k: 32  mAP: 0.6700  mean_P: 0.6070
+   k: 64  mAP: 0.6937  mean_P: 0.6176
+   k: 128  mAP: 0.7103  mean_P: 0.6250
+   k: 256  mAP: 0.7213  mean_P: 0.6339
+   k: 512  mAP: 0.7282  mean_P: 0.6391
+   k: 1024  mAP: 0.7323  mean_P: 0.6396
+   k: 2048  mAP: 0.7333  mean_P: 0.6354
+   k: 4096  mAP: 0.7299  mean_P: 0.6274
+
+python main_hash.py --batch-size 1920 --name hashing-our-t30 --dist-port 8873 --mode neuralef --learning-rate 2.25 --alpha 0.005 --proj_dim 4096 4096 --checkpoint-dir /home/zhijie/logs/ --epochs 50 --t 30
+
+python main_hash.py --batch-size 1920 --name hashing-our-t30-nsg --dist-port 8873 --mode neuralef --learning-rate 2.25 --alpha 0.005 --proj_dim 4096 4096 --checkpoint-dir /home/zhijie/logs/ --epochs 50 --t 30 --no_stop_grad
+
+python main_hash.py --batch-size 1920 --name hashing-spectral --dist-port 8873 --mode spectral --learning-rate 2.25 --proj_dim 4096 4096 --epochs 50 --checkpoint-dir /workspace/home/zhijie/logs/ --data /workspace/home/fanbao/datasets/ImageNet --coco_dir /workspace/home/zhijie/train2014 --coco_db_path /workspace/home/zhijie/coco_DB.txt --coco_query_path /workspace/home/zhijie/coco_Query.txt
+
+
+
+python main_hash.py --batch-size 1920 --name hashing-r50-t10 --dist-port 8873 --mode neuralef --learning-rate 2.25 --alpha 0.01 --proj_dim 2048 2048 --t 10 --checkpoint-dir /home/zhijie/logs/
+     k: 4  mAP: 0.4535  mean_P: 0.4546
+     k: 8  mAP: 0.6130  mean_P: 0.6051
+     k: 16  mAP: 0.6753  mean_P: 0.6525
+     k: 32  mAP: 0.7006  mean_P: 0.6665
+     k: 64  mAP: 0.7139  mean_P: 0.6705
+     k: 128  mAP: 0.7178  mean_P: 0.6694
+     k: 256  mAP: 0.7169  mean_P: 0.6636
+     k: 512  mAP: 0.7163  mean_P: 0.6586
+     k: 1024  mAP: 0.7144  mean_P: 0.6498
+     k: 2048  mAP: 0.7105  mean_P: 0.6376
+
+     k: 4  mAP: 0.0390  mean_P: 0.0330
+     k: 8  mAP: 0.1359  mean_P: 0.1282
+     k: 16  mAP: 0.3570  mean_P: 0.3186
+     k: 32  mAP: 0.4973  mean_P: 0.4193
+     k: 64  mAP: 0.5462  mean_P: 0.4564
+     k: 128  mAP: 0.5668  mean_P: 0.4770
+     k: 256  mAP: 0.5721  mean_P: 0.4887
+     k: 512  mAP: 0.5746  mean_P: 0.4959
+     k: 1024  mAP: 0.5741  mean_P: 0.4967
+     k: 2048  mAP: 0.5738  mean_P: 0.4961
+
+     k: 4  mAP: 0.4472  mean_P: 0.4480
+     k: 8  mAP: 0.5732  mean_P: 0.5551
+     k: 16  mAP: 0.6482  mean_P: 0.5937
+     k: 32  mAP: 0.6965  mean_P: 0.6113
+     k: 64  mAP: 0.7127  mean_P: 0.6189
+     k: 128  mAP: 0.7221  mean_P: 0.6256
+     k: 256  mAP: 0.7294  mean_P: 0.6312
+     k: 512  mAP: 0.7343  mean_P: 0.6294
+     k: 1024  mAP: 0.7349  mean_P: 0.6238
+     k: 2048  mAP: 0.7330  mean_P: 0.6152
+
+python main_hash.py --batch-size 1920 --name hashing-r50-4 --dist-port 8873 --mode neuralef --learning-rate 2.25 --alpha 0.01 --proj_dim 2048 2048 --t 20 --checkpoint-dir /home/zhijie/logs/
+     k: 4  mAP: 0.5197  mean_P: 0.5166
+     k: 8  mAP: 0.6159  mean_P: 0.6065
+     k: 16  mAP: 0.6748  mean_P: 0.6460
+     k: 32  mAP: 0.7003  mean_P: 0.6584
+     k: 64  mAP: 0.7071  mean_P: 0.6541
+     k: 128  mAP: 0.7116  mean_P: 0.6492
+     k: 256  mAP: 0.7103  mean_P: 0.6428
+     k: 512  mAP: 0.7039  mean_P: 0.6318
+     k: 1024  mAP: 0.6974  mean_P: 0.6163
+     k: 2048  mAP: 0.6897  mean_P: 0.6008
+
+     k: 4  mAP: 0.0523  mean_P: 0.0462
+     k: 8  mAP: 0.1641  mean_P: 0.1550
+     k: 16  mAP: 0.3865  mean_P: 0.3268
+     k: 32  mAP: 0.5106  mean_P: 0.4171
+     k: 64  mAP: 0.5507  mean_P: 0.4564
+     k: 128  mAP: 0.5670  mean_P: 0.4754
+     k: 256  mAP: 0.5738  mean_P: 0.4848
+     k: 512  mAP: 0.5769  mean_P: 0.4879
+     k: 1024  mAP: 0.5769  mean_P: 0.4861
+     k: 2048  mAP: 0.5750  mean_P: 0.4756
+
+     k: 4  mAP: 0.4719  mean_P: 0.4709
+     k: 8  mAP: 0.5907  mean_P: 0.5710
+     k: 16  mAP: 0.6535  mean_P: 0.5923
+     k: 32  mAP: 0.6903  mean_P: 0.6028
+     k: 64  mAP: 0.7084  mean_P: 0.6136
+     k: 128  mAP: 0.7200  mean_P: 0.6183
+     k: 256  mAP: 0.7257  mean_P: 0.6162
+     k: 512  mAP: 0.7248  mean_P: 0.6079
+     k: 1024  mAP: 0.7173  mean_P: 0.5897
+     k: 2048  mAP: 0.7104  mean_P: 0.5711
+
+     best see plot
+
+python main_hash.py --batch-size 2050 --name hashing-r50-5 --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.01 --proj_dim 2048 2048 --t 50 --no_last_bn --checkpoint-dir /workspace/home/zhijie/logs/ --data /workspace/home/fanbao/datasets/ImageNet --coco_dir /workspace/home/zhijie/train2014 --coco_db_path /workspace/home/zhijie/coco_DB.txt --coco_query_path /workspace/home/zhijie/coco_Query.txt
+
+python main_hash.py --batch-size 2050 --name hashing-r50-3 --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.03 --proj_dim 2048 2048 --t 30 --checkpoint-dir /workspace/home/zhijie/logs/ --data /workspace/home/fanbao/datasets/ImageNet --coco_dir /workspace/home/zhijie/train2014 --coco_db_path /workspace/home/zhijie/coco_DB.txt --coco_query_path /workspace/home/zhijie/coco_Query.txt
+     k: 4  mAP: 0.4924  mean_P: 0.4895
+     k: 8  mAP: 0.6243  mean_P: 0.6143
+     k: 16  mAP: 0.6980  mean_P: 0.6691
+     k: 32  mAP: 0.7210  mean_P: 0.6801
+     k: 64  mAP: 0.7265  mean_P: 0.6749
+     k: 128  mAP: 0.7271  mean_P: 0.6664
+     k: 256  mAP: 0.7228  mean_P: 0.6576
+     k: 512  mAP: 0.7151  mean_P: 0.6409
+     k: 1024  mAP: 0.7050  mean_P: 0.6174
+     k: 2048  mAP: 0.6987  mean_P: 0.5973
+
+     k: 4  mAP: 0.0544  mean_P: 0.0478
+     k: 8  mAP: 0.1672  mean_P: 0.1533
+     k: 16  mAP: 0.3976  mean_P: 0.3347
+     k: 32  mAP: 0.4953  mean_P: 0.3964
+     k: 64  mAP: 0.5352  mean_P: 0.4350
+     k: 128  mAP: 0.5589  mean_P: 0.4595
+     k: 256  mAP: 0.5681  mean_P: 0.4727
+     k: 512  mAP: 0.5739  mean_P: 0.4782
+     k: 1024  mAP: 0.5742  mean_P: 0.4652
+     k: 2048  mAP: 0.5688  mean_P: 0.4264
+
+     k: 4  mAP: 0.4729  mean_P: 0.4671
+     k: 8  mAP: 0.5797  mean_P: 0.5628
+     k: 16  mAP: 0.6548  mean_P: 0.6019
+     k: 32  mAP: 0.6910  mean_P: 0.6115
+     k: 64  mAP: 0.7147  mean_P: 0.6183
+     k: 128  mAP: 0.7236  mean_P: 0.6183
+     k: 256  mAP: 0.7278  mean_P: 0.6105
+     k: 512  mAP: 0.7227  mean_P: 0.5922
+     k: 1024  mAP: 0.7135  mean_P: 0.5635
+     k: 2048  mAP: 0.7038  mean_P: 0.5399
+
+python main_hash.py --batch-size 2024 --name temp --dist-port 8873 --mode neuralef --learning-rate 2.4 --alpha 0.01 --proj_dim 2048 2048 --checkpoint-dir /home/zhijie/logs --t 30 --resume auto
+ k: 4  mAP: 0.4429  mean_P: 0.4426
+ k: 8  mAP: 0.6115  mean_P: 0.6006
+ k: 16  mAP: 0.6681  mean_P: 0.6392
+ k: 32  mAP: 0.6923  mean_P: 0.6476
+ k: 64  mAP: 0.7013  mean_P: 0.6499
+ k: 128  mAP: 0.6997  mean_P: 0.6372
+ k: 256  mAP: 0.6967  mean_P: 0.6278
+ k: 512  mAP: 0.6919  mean_P: 0.6173
+ k: 1024  mAP: 0.6827  mean_P: 0.5989
+ k: 2048  mAP: 0.6722  mean_P: 0.5793
+
+ k: 4  mAP: 0.0493  mean_P: 0.0430
+ k: 8  mAP: 0.1739  mean_P: 0.1627
+ k: 16  mAP: 0.4143  mean_P: 0.3433
+ k: 32  mAP: 0.5184  mean_P: 0.4230
+ k: 64  mAP: 0.5547  mean_P: 0.4564
+ k: 128  mAP: 0.5708  mean_P: 0.4776
+ k: 256  mAP: 0.5742  mean_P: 0.4840
+ k: 512  mAP: 0.5833  mean_P: 0.4907
+ k: 1024  mAP: 0.5825  mean_P: 0.4872
+ k: 2048  mAP: 0.5813  mean_P: 0.4679
+
+ k: 4  mAP: 0.4917  mean_P: 0.4955
+ k: 8  mAP: 0.5824  mean_P: 0.5631
+ k: 16  mAP: 0.6622  mean_P: 0.5980
+ k: 32  mAP: 0.6945  mean_P: 0.6057
+ k: 64  mAP: 0.7116  mean_P: 0.6124
+ k: 128  mAP: 0.7202  mean_P: 0.6122
+ k: 256  mAP: 0.7223  mean_P: 0.6047
+ k: 512  mAP: 0.7184  mean_P: 0.5932
+ k: 1024  mAP: 0.7081  mean_P: 0.5711
+ k: 2048  mAP: 0.6973  mean_P: 0.5438
+
+python main_hash.py --batch-size 2024 --name hashing-r50-spectral --dist-port 8873 --mode spectral --learning-rate 2.4 --proj_dim 2048 2048 --checkpoint-dir /home/zhijie/logs --resume auto
+  k: 4  mAP: 0.4298  mean_P: 0.4289
+  k: 8  mAP: 0.5324  mean_P: 0.4974
+  k: 16  mAP: 0.6459  mean_P: 0.5976
+  k: 32  mAP: 0.7178  mean_P: 0.6604
+  k: 64  mAP: 0.7511  mean_P: 0.6979
+  k: 128  mAP: 0.7685  mean_P: 0.7239
+  k: 256  mAP: 0.7735  mean_P: 0.7332
+  k: 512  mAP: 0.7764  mean_P: 0.7387
+  k: 1024  mAP: 0.7786  mean_P: 0.7414
+  k: 2048  mAP: 0.7798  mean_P: 0.7434
+
+  k: 4  mAP: 0.0509  mean_P: 0.0449
+  k: 8  mAP: 0.1784  mean_P: 0.1477
+  k: 16  mAP: 0.3512  mean_P: 0.2560
+  k: 32  mAP: 0.4392  mean_P: 0.3353
+  k: 64  mAP: 0.4782  mean_P: 0.3816
+  k: 128  mAP: 0.4962  mean_P: 0.4012
+  k: 256  mAP: 0.5062  mean_P: 0.4122
+  k: 512  mAP: 0.5084  mean_P: 0.4142
+  k: 1024  mAP: 0.5110  mean_P: 0.4163
+  k: 2048  mAP: 0.5123  mean_P: 0.4175
+
+  k: 4  mAP: 0.4467  mean_P: 0.4421
+  k: 8  mAP: 0.5444  mean_P: 0.4975
+  k: 16  mAP: 0.6276  mean_P: 0.5489
+  k: 32  mAP: 0.6874  mean_P: 0.5937
+  k: 64  mAP: 0.7199  mean_P: 0.6302
+  k: 128  mAP: 0.7327  mean_P: 0.6459
+  k: 256  mAP: 0.7371  mean_P: 0.6529
+  k: 512  mAP: 0.7378  mean_P: 0.6548
+  k: 1024  mAP: 0.7398  mean_P: 0.6570
+  k: 2048  mAP: 0.7401  mean_P: 0.6576
