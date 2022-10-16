@@ -359,6 +359,45 @@ class NeuralEFCLR(nn.Module):
         acc = torch.sum(torch.eq(torch.argmax(logits, dim=1), labels)) / logits.size(0)
         return loss, reg, cls_loss, acc
 
+    @torch.no_grad()
+    def estimate_output_norm(self, loader, early_stop=None):
+        self.eval()
+        output_norm = 0
+        R_diag = 0
+        num_data = 0
+        for step, ((y1, y2), _) in enumerate(loader):
+            y1 = y1.cuda(non_blocking=True)
+            y2 = y2.cuda(non_blocking=True)
+            with torch.cuda.amp.autocast():
+                z1, z2 = self.projector(self.backbone(torch.cat([y1, y2], 0))).chunk(2, dim=0)
+                z1 = gather_from_all(z1)
+                z2 = gather_from_all(z2)
+                sigma = (z1.norm(dim=0) ** 2 + z2.norm(dim=0) ** 2).sqrt() / math.sqrt(z1.shape[0] + z2.shape[0])
+                output_norm += sigma
+
+                z1 = z1 / sigma
+                z2 = z2 / sigma
+                R_diag += (z1 * z2).sum(0)
+                num_data += z1.shape[0]
+
+            if step % 100 == 0:
+                print(step, output_norm/(step+1), R_diag/num_data)
+
+            if early_stop is not None and step == early_stop:
+                break
+
+        output_norm /= (step + 1)
+        R_diag /= num_data
+        self.register_buffer('output_norm', output_norm)
+        self.register_buffer('R_diag_sqrt', R_diag.clamp(min=0).sqrt())
+
+    @torch.no_grad()
+    def inference(self, y, normalize=False):
+        z = self.projector(self.backbone(y))
+        if normalize:
+            return z / self.output_norm * self.R_diag_sqrt
+        else:
+            return z
 
 def off_diagonal(x):
     # return a flattened view of the off-diagonal elements of a square matrix
@@ -475,6 +514,14 @@ class SpectralCLR(nn.Module):
         cls_loss = F.cross_entropy(logits, labels)
         acc = torch.sum(torch.eq(torch.argmax(logits, dim=1), labels)) / logits.size(0)
         return loss, reg, cls_loss, acc
+
+    @torch.no_grad()
+    def inference(self, y, normalize=False):
+        z = self.projector(self.backbone(y))
+        if normalize:
+            return F.normalize(z, dim=1)
+        else:
+            return z
 
 if __name__ == '__main__':
     main()

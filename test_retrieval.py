@@ -15,12 +15,14 @@ import math
 
 import torch
 import torchvision
+# from torchvision import datasets, transforms
 from torch import nn
 import torch.nn.functional as F
 
 from torch.utils.tensorboard import SummaryWriter
 
 from utils import *
+from main import NeuralEFCLR, SpectralCLR
 
 from retrieval import retrieval
 from functools import partial
@@ -41,7 +43,7 @@ parser.add_argument('--name', type=str, default='default')
 parser.add_argument('--resume', type=str, default=None)
 parser.add_argument('--model', type=str, default='resnet50')
 
-parser.add_argument('--proj_dim', default=[2048, 128], type=int, nargs='+')
+parser.add_argument('--proj_dim', default=[4096, 4096], type=int, nargs='+')
 parser.add_argument('--no_proj_bn', default=False, action='store_true')
 
 parser.add_argument('--coco_dir', default='/home/zhijie/data/train2014', type=str)
@@ -52,8 +54,7 @@ parser.add_argument('--voc2012_dir', default='/home/zhijie/data/', type=str)
 parser.add_argument('--mirflickr_dir', default='/home/zhijie/data/mirflickr', type=str)
 
 parser.add_argument('--random_runs', default=None, type=int)
-parser.add_argument('--bn', default=False, action='store_true')
-parser.add_argument('--l2_normalize', default=False, action='store_true')
+parser.add_argument('--normalize', default=False, action='store_true')
 
 # Dist
 parser.add_argument('--world-size', default=1, type=int,
@@ -89,6 +90,7 @@ def main():
 def main_worker(gpu, args):
     args.rank += gpu
     print(args.world_size, args.rank, args.dist_url)
+    assert args.world_size == 1
     torch.distributed.init_process_group(
         backend='nccl', init_method=args.dist_url,
         world_size=args.world_size, rank=args.rank)
@@ -125,111 +127,21 @@ def main_worker(gpu, args):
         ckpt = torch.load(args.resume, map_location='cpu')
         model.load_state_dict(ckpt['model'])
 
-    if args.rank == 0:
-        model.eval()
+    model.eval()
 
-        retrieval(args.nuswide_dir, '/home/zhijie/data/nuswide_m_DB.txt', '/home/zhijie/data/nuswide_m_Query.txt', model.device, model.module.inference, 256, dname='nuswide_m', log_dir=args.log_dir, random_runs=args.random_runs, bn=args.bn, l2_normalize=args.l2_normalize)
-        retrieval(args.voc2012_dir, '/home/zhijie/data/voc2012_DB.txt', '/home/zhijie/data/voc2012_Query.txt', model.device, model.module.inference, 256, dname='voc2012', log_dir=args.log_dir, random_runs=args.random_runs, bn=args.bn, l2_normalize=args.l2_normalize)
-        retrieval(args.mirflickr_dir, '/home/zhijie/data/mirflickr_DB.txt', '/home/zhijie/data/mirflickr_Query.txt', model.device, model.module.inference, 256, dname='mirflickr', log_dir=args.log_dir, random_runs=args.random_runs, bn=args.bn, l2_normalize=args.l2_normalize)
-        # retrieval(args.data, '/home/zhijie/data/imagenet_DB.txt', '/home/zhijie/data/imagenet_Query.txt', model.device, model.module.inference, 256, dname='imagenet', log_dir=args.log_dir, random_runs=args.random_runs, bn=args.bn, l2_normalize=args.l2_normalize)
-        retrieval(args.coco_dir, args.coco_db_path, args.coco_query_path, model.device, model.module.inference, 256, log_dir=args.log_dir, random_runs=args.random_runs, bn=args.bn, l2_normalize=args.l2_normalize)
+    if args.mode == 'neuralef' and args.normalize:
+        dataset = torchvision.datasets.ImageFolder(os.path.join(args.data, 'train'), Transform(args))
+        loader = torch.utils.data.DataLoader(
+            dataset, batch_size=1024, num_workers=args.workers,
+            pin_memory=True, sampler=None, shuffle=True)
+        model.module.estimate_output_norm(loader)
 
-        retrieval(args.nuswide_dir, '/home/zhijie/data/nuswide_m_DB.txt', '/home/zhijie/data/nuswide_m_Query.txt', model.device, partial(model.module.inference, binary=True), 256, dname='nuswide_m', log_dir=args.log_dir, random_runs=args.random_runs)
-        retrieval(args.voc2012_dir, '/home/zhijie/data/voc2012_DB.txt', '/home/zhijie/data/voc2012_Query.txt', model.device, partial(model.module.inference, binary=True), 256, dname='voc2012', log_dir=args.log_dir, random_runs=args.random_runs)
-        retrieval(args.mirflickr_dir, '/home/zhijie/data/mirflickr_DB.txt', '/home/zhijie/data/mirflickr_Query.txt', model.device, partial(model.module.inference, binary=True), 256, dname='mirflickr', log_dir=args.log_dir, random_runs=args.random_runs)
-        # retrieval(args.data, '/home/zhijie/data/imagenet_DB.txt', '/home/zhijie/data/imagenet_Query.txt', model.device, partial(model.module.inference, binary=True), 256, dname='imagenet', log_dir=args.log_dir, random_runs=args.random_runs)
-        retrieval(args.coco_dir, args.coco_db_path, args.coco_query_path, model.device, partial(model.module.inference, binary=True), 256, log_dir=args.log_dir, random_runs=args.random_runs)
-
-    torch.distributed.barrier()
-
-class NeuralEFCLR(nn.Module):
-    def __init__(self, args):
-        super().__init__()
-        self.args = args
-        self.backbone = getattr(torchvision.models, args.model)(zero_init_residual=True)
-        self.online_head = nn.Linear(self.backbone.fc.in_features, 1000)
-
-        if args.proj_dim[0] == 0:
-            self.projector = nn.Identity()
-        else:
-            if len(args.proj_dim) > 1:
-                sizes = [self.backbone.fc.in_features,] + args.proj_dim
-                layers = []
-                for i in range(len(sizes) - 2):
-                    layers.append(nn.Linear(sizes[i], sizes[i + 1], bias=False))
-                    if args.proj_bn:
-                        layers.append(nn.BatchNorm1d(sizes[i+1]))
-                    layers.append(nn.ReLU(inplace=True))
-                layers.append(nn.Linear(sizes[-2], sizes[-1], bias=True))
-                self.projector = nn.Sequential(*layers)
-            elif len(args.proj_dim) == 1:
-                self.projector = nn.Linear(2048, args.proj_dim[0], bias=True)
-
-        self.backbone.fc = nn.Identity()
-
-        if args.rank == 0 and hasattr(self, 'projector'):
-            print(self.backbone)
-            print(self.projector)
-
-    def inference(self, y, k=None, binary=False):
-        if binary:
-            codes = hash_layer(self.projector(self.backbone(y)).sigmoid() - 0.5)
-        else:
-            codes = self.projector(self.backbone(y))
-        if k == None:
-            k = codes.shape[-1]
-        return codes[...,:k]
-
-class SpectralCLR(nn.Module):
-    def __init__(self, args):
-        super().__init__()
-        self.args = args
-        self.backbone = torchvision.models.resnet50(zero_init_residual=True)
-        self.backbone.fc = nn.Identity()
-
-        self.online_head = nn.Linear(2048, 1000)
-
-        if args.proj_dim[0] == 0:
-            self.projector = nn.Identity()
-        else:
-            if len(args.proj_dim) > 1:
-                sizes = [2048,] + args.proj_dim
-                layers = []
-                for i in range(len(sizes) - 2):
-                    layers.append(nn.Linear(sizes[i], sizes[i + 1], bias=False))
-                    if args.proj_bn:
-                        layers.append(nn.BatchNorm1d(sizes[i+1]))
-                    layers.append(nn.ReLU(inplace=True))
-                layers.append(nn.Linear(sizes[-2], sizes[-1], bias=False))
-                if args.proj_bn:
-                    layers.append(nn.BatchNorm1d(sizes[-1]))
-                self.projector = nn.Sequential(*layers)
-            elif len(args.proj_dim) == 1:
-                self.projector = nn.Linear(2048, args.proj_dim[0], bias=True)
-
-        if args.rank == 0 and hasattr(self, 'projector'):
-            print(self.projector)
-
-    def inference(self, y, k=None, binary=False):
-        if binary:
-            codes = hash_layer(self.projector(self.backbone(y)).sigmoid() - 0.5)
-        else:
-            codes = self.projector(self.backbone(y))
-        if k == None:
-            k = codes.shape[-1]
-        return codes[...,:k]
-
-class hash(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, input):
-        return torch.sign(input)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        return grad_output
-
-def hash_layer(input):
-    return hash.apply(input)
+    inference_fn = partial(model.module.inference, normalize=args.normalize)
+    retrieval(args.nuswide_dir, '/home/zhijie/data/nuswide_m_DB.txt', '/home/zhijie/data/nuswide_m_Query.txt', model.device, inference_fn, 256, dname='nuswide_m', log_dir=args.log_dir, random_runs=args.random_runs)
+    retrieval(args.voc2012_dir, '/home/zhijie/data/voc2012_DB.txt', '/home/zhijie/data/voc2012_Query.txt', model.device, inference_fn, 256, dname='voc2012', log_dir=args.log_dir, random_runs=args.random_runs)
+    retrieval(args.mirflickr_dir, '/home/zhijie/data/mirflickr_DB.txt', '/home/zhijie/data/mirflickr_Query.txt', model.device, inference_fn, 256, dname='mirflickr', log_dir=args.log_dir, random_runs=args.random_runs)
+    retrieval(args.coco_dir, args.coco_db_path, args.coco_query_path, model.device, inference_fn, 256, log_dir=args.log_dir, random_runs=args.random_runs)
+    # retrieval(args.data, '/home/zhijie/data/imagenet_DB.txt', '/home/zhijie/data/imagenet_Query.txt', model.device, inference_fn, 256, dname='imagenet', log_dir=args.log_dir, random_runs=args.random_runs)
 
 if __name__ == '__main__':
     main()

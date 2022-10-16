@@ -106,7 +106,7 @@ def Evaluate_mAP(device, gallery_codes, query_codes, gallery_labels, query_label
     mean_P = mean_P / num_query
     return mean_AP, mean_P, T.stack(retrievals)
 
-def DoRetrieval(device, net, log_dir, Img_dir, Gallery_dir, Query_dir, NB_CLS, Top_N, batch_size, subset=None, l2_normalize=False, random_runs=None, bn=False):
+def DoRetrieval(device, net, log_dir, Img_dir, Gallery_dir, Query_dir, NB_CLS, Top_N, batch_size, subset=None, dname='coco', random_runs=None):
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
@@ -200,14 +200,6 @@ def DoRetrieval(device, net, log_dir, Img_dir, Gallery_dir, Query_dir, NB_CLS, T
             for run in range(random_runs):
                 gallery_c_k = gallery_c[...,rand_indices[run, :k]]
                 query_c_k = query_c[...,rand_indices[run, :k]]
-                if l2_normalize:
-                    gallery_c_k = F.normalize(gallery_c_k, dim=1)
-                    query_c_k = F.normalize(query_c_k, dim=1)
-
-                if bn:
-                    g_norm = gallery_c_k.norm(dim=0)
-                    query_c_k /= g_norm
-                    gallery_c_k /= g_norm
 
                 mAP_, mean_P_, retrievals = Evaluate_mAP(device, gallery_c_k, query_c_k, gallery_y, query_y, Top_N)
                 mAP.append(mAP_.cpu()); mean_P.append(mean_P_.cpu())
@@ -217,14 +209,6 @@ def DoRetrieval(device, net, log_dir, Img_dir, Gallery_dir, Query_dir, NB_CLS, T
         else:
             gallery_c_k = gallery_c[...,:k]
             query_c_k = query_c[...,:k]
-            if l2_normalize:
-                gallery_c_k = F.normalize(gallery_c_k, dim=1)
-                query_c_k = F.normalize(query_c_k, dim=1)
-
-            if bn:
-                g_norm = gallery_c_k.norm(dim=0)
-                query_c_k /= g_norm
-                gallery_c_k /= g_norm
 
             mAP, mean_P, retrievals = Evaluate_mAP(device, gallery_c_k, query_c_k, gallery_y, query_y, Top_N)
             maps.append(mAP)
@@ -248,7 +232,7 @@ def DoRetrieval(device, net, log_dir, Img_dir, Gallery_dir, Query_dir, NB_CLS, T
             img = np.concatenate([q_img, np.zeros((224, 10, 3)).astype(np.uint8), v_imgs], 1)
 
             im = Image.fromarray(img).convert('RGB')
-            im.save("{}/retrieval_{}_{}.pdf".format(log_dir, k, ite))
+            im.save("{}/{}_{}_{}.pdf".format(log_dir, dname, k, ite))
 
             # plt.figure(figsize=(4, 44))
             # plt.imsave("{}/retrieval_{}_{}.pdf".format(log_dir, k, ite), img[:,:,:])
@@ -258,7 +242,7 @@ def DoRetrieval(device, net, log_dir, Img_dir, Gallery_dir, Query_dir, NB_CLS, T
     # for k, mAP in zip(ks, maps):
 
 
-def retrieval(Img_dir, Gallery_dir, Query_dir, device, model_fn, batch_size, log_dir, subset=None, dname='coco', l2_normalize=False, random_runs=None, bn=False):
+def retrieval(Img_dir, Gallery_dir, Query_dir, device, model_fn, batch_size, log_dir, subset=None, dname='coco', random_runs=None):
     if dname=='coco':
         NB_CLS=80
         Top_N=5000
@@ -280,4 +264,4 @@ def retrieval(Img_dir, Gallery_dir, Query_dir, device, model_fn, batch_size, log
     else:
         print("Wrong dataset name.")
         return
-    return DoRetrieval(device, model_fn, log_dir, Img_dir, Gallery_dir, Query_dir, NB_CLS, Top_N, batch_size, subset, l2_normalize, random_runs, bn)
+    return DoRetrieval(device, model_fn, log_dir, Img_dir, Gallery_dir, Query_dir, NB_CLS, Top_N, batch_size, subset, dname, random_runs)
