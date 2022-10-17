@@ -364,6 +364,7 @@ class NeuralEFCLR(nn.Module):
         self.eval()
         output_norm = 0
         R_diag = 0
+        num_all_data = 0
         num_data = 0
         for step, ((y1, y2), _) in enumerate(loader):
             y1 = y1.cuda(non_blocking=True)
@@ -372,21 +373,23 @@ class NeuralEFCLR(nn.Module):
                 z1, z2 = self.projector(self.backbone(torch.cat([y1, y2], 0))).chunk(2, dim=0)
                 z1 = gather_from_all(z1)
                 z2 = gather_from_all(z2)
-                sigma = (z1.norm(dim=0) ** 2 + z2.norm(dim=0) ** 2).sqrt() / math.sqrt(z1.shape[0] + z2.shape[0])
+                sigma = (z1.norm(dim=0) ** 2 + z2.norm(dim=0) ** 2)
                 output_norm += sigma
+                num_all_data += (z1.shape[0] + z2.shape[0])
 
+                sigma = (sigma / (z1.shape[0] + z2.shape[0])).sqrt()
                 z1 = z1 / sigma
                 z2 = z2 / sigma
                 R_diag += (z1 * z2).sum(0)
                 num_data += z1.shape[0]
 
             if step % 100 == 0:
-                print(step, output_norm/(step+1), R_diag/num_data)
+                print(step, output_norm/num_all_data, R_diag/num_data)
 
             if early_stop is not None and step == early_stop:
                 break
 
-        output_norm /= (step + 1)
+        output_norm = (output_norm/num_all_data).sqrt()
         R_diag /= num_data
         self.register_buffer('output_norm', output_norm)
         self.register_buffer('R_diag_sqrt', R_diag.clamp(min=0).sqrt())
