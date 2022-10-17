@@ -398,7 +398,7 @@ class NeuralEFCLR(nn.Module):
     def inference(self, y, normalize=False):
         z = self.projector(self.backbone(y))
         if normalize:
-            return z / self.output_norm * self.R_diag_sqrt
+            return z / self.output_norm
         else:
             return z
 

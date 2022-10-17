@@ -76,15 +76,14 @@ def Evaluate_mAP(device, gallery_codes, query_codes, gallery_labels, query_label
     mean_AP = 0.0
     mean_P = 0.0
 
+    all_retrieval = (query_labels @ gallery_labels.t() > 0).float()
+
     gallery_codes = F.normalize(gallery_codes, dim=1)
     query_codes = F.normalize(query_codes, dim=1)
+    all_hamming_dist = (gallery_codes.shape[1] - query_codes @ gallery_codes.t())
+    all_sort_idx = T.cat([T.argsort(all_hamming_dist[i*num_query//10:(i+1)*num_query//10], dim=-1)[..., :Top_N] for i in range(10)], 0)
 
     retrievals = []
-    with T.cuda.amp.autocast():
-        all_retrieval = (query_labels @ gallery_labels.t() > 0).float()
-        all_hamming_dist = (gallery_codes.shape[1] - query_codes @ gallery_codes.t())
-        all_sort_idx = T.cat([T.argsort(all_hamming_dist[i*num_query//10:(i+1)*num_query//10], dim=-1)[..., :Top_N] for i in range(10)], 0)
-
     for i in range(num_query):
         retrieval = all_retrieval[i] #(query_labels[i, :] @ gallery_labels.t() > 0).float()
         # hamming_dist = all_hamming_dist[i] # (gallery_codes.shape[1] - query_codes[i, :] @ gallery_codes.t())
