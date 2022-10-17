@@ -76,6 +76,9 @@ def Evaluate_mAP(device, gallery_codes, query_codes, gallery_labels, query_label
     mean_AP = 0.0
     mean_P = 0.0
 
+    gallery_codes = F.normalize(gallery_codes, dim=1)
+    query_codes = F.normalize(query_codes, dim=1)
+
     retrievals = []
     with T.cuda.amp.autocast():
         all_retrieval = (query_labels @ gallery_labels.t() > 0).float()
