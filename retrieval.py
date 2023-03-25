@@ -19,6 +19,8 @@ from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 import matplotlib.pyplot as plt
 
+from utils import Transform
+
 def load_img(img_name):
     with open(img_name, "rb") as f:
         image = Image.open(f)
@@ -108,7 +110,7 @@ def Evaluate_mAP(device, gallery_codes, query_codes, gallery_labels, query_label
     mean_P = mean_P / num_query
     return mean_AP, mean_P, T.stack(retrievals)
 
-def DoRetrieval(device, net, log_dir, Img_dir, Gallery_dir, Query_dir, NB_CLS, Top_N, batch_size, subset=None, dname='coco', random_runs=None):
+def DoRetrieval(device, net, log_dir, Img_dir, Gallery_dir, Query_dir, NB_CLS, Top_N, batch_size, subset=None, dname='coco', random_runs=None, pca=False):
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
@@ -128,6 +130,11 @@ def DoRetrieval(device, net, log_dir, Img_dir, Gallery_dir, Query_dir, NB_CLS, T
         ]))
     Query_loader = T.utils.data.DataLoader(Query_set, batch_size=batch_size, num_workers=4)
 
+    dataset = torchvision.datasets.ImageFolder(os.path.join('/home/LargeData/Large/ImageNet', 'train'), Transform(None))
+    loader = T.utils.data.DataLoader(
+        dataset, batch_size=1024, num_workers=16,
+        pin_memory=True, sampler=None)
+
     # q_img = Query_set[234][0]
     # q_img = q_img.mul(T.tensor([0.229, 0.224, 0.225]).view(-1, 1, 1)).add(T.tensor([0.485, 0.456, 0.406]).view(-1, 1, 1))
     # print(q_img.min(), q_img.max())
@@ -141,6 +148,21 @@ def DoRetrieval(device, net, log_dir, Img_dir, Gallery_dir, Query_dir, NB_CLS, T
     # plt.axis('off')
     # return
 
+    if pca:
+        with T.no_grad():
+            cov_ = 0
+            cnt = 0
+            for i, ((data, _), _) in enumerate(loader, 0):
+                if i % 100 == 0:
+                    print(i)
+                data = data.to(device)
+                with T.cuda.amp.autocast():
+                    outputs = net(data).float()
+                cov_ += outputs.T @ outputs
+                cnt += outputs.shape[0]
+            cov_ /= cnt
+            L, Q = T.linalg.eigh(cov_)
+            print(L[:5], L[-5:])
 
     with T.no_grad():
         for i, data in enumerate(Gallery_loader, 0):
@@ -209,8 +231,12 @@ def DoRetrieval(device, net, log_dir, Img_dir, Gallery_dir, Query_dir, NB_CLS, T
                 (k,np.mean(mAP),np.std(mAP),np.mean(mean_P),np.std(mean_P)))
             maps.append(np.mean(mAP))
         else:
-            gallery_c_k = gallery_c[...,:k]
-            query_c_k = query_c[...,:k]
+            if pca:
+                gallery_c_k = gallery_c @ Q[:, -k:]
+                query_c_k = query_c @ Q[:, -k:]
+            else:
+                gallery_c_k = gallery_c[...,:k]
+                query_c_k = query_c[...,:k]
 
             mAP, mean_P, retrievals = Evaluate_mAP(device, gallery_c_k, query_c_k, gallery_y, query_y, Top_N)
             maps.append(mAP)
@@ -244,7 +270,7 @@ def DoRetrieval(device, net, log_dir, Img_dir, Gallery_dir, Query_dir, NB_CLS, T
     # for k, mAP in zip(ks, maps):
 
 
-def retrieval(Img_dir, Gallery_dir, Query_dir, device, model_fn, batch_size, log_dir, subset=None, dname='coco', random_runs=None):
+def retrieval(Img_dir, Gallery_dir, Query_dir, device, model_fn, batch_size, log_dir, subset=None, dname='coco', random_runs=None, pca=False):
     if dname=='coco':
         NB_CLS=80
         Top_N=5000
@@ -266,4 +292,4 @@ def retrieval(Img_dir, Gallery_dir, Query_dir, device, model_fn, batch_size, log
     else:
         print("Wrong dataset name.")
         return
-    return DoRetrieval(device, model_fn, log_dir, Img_dir, Gallery_dir, Query_dir, NB_CLS, Top_N, batch_size, subset, dname, random_runs)
+    return DoRetrieval(device, model_fn, log_dir, Img_dir, Gallery_dir, Query_dir, NB_CLS, Top_N, batch_size, subset, dname, random_runs, pca)

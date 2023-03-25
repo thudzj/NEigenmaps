@@ -55,6 +55,7 @@ parser.add_argument('--mirflickr_dir', default='/home/zhijie/data/mirflickr', ty
 
 parser.add_argument('--random_runs', default=None, type=int)
 parser.add_argument('--normalize', default=False, action='store_true')
+parser.add_argument('--pca', default=False, action='store_true')
 
 # Dist
 parser.add_argument('--world-size', default=1, type=int,
@@ -137,10 +138,10 @@ def main_worker(gpu, args):
         model.module.estimate_output_norm(loader)
 
     inference_fn = partial(model.module.inference, normalize=args.normalize)
-    retrieval(args.nuswide_dir, '/home/zhijie/data/nuswide_m_DB.txt', '/home/zhijie/data/nuswide_m_Query.txt', model.device, inference_fn, 256, dname='nuswide_m', log_dir=args.log_dir, random_runs=args.random_runs)
-    retrieval(args.voc2012_dir, '/home/zhijie/data/voc2012_DB.txt', '/home/zhijie/data/voc2012_Query.txt', model.device, inference_fn, 256, dname='voc2012', log_dir=args.log_dir, random_runs=args.random_runs)
-    retrieval(args.mirflickr_dir, '/home/zhijie/data/mirflickr_DB.txt', '/home/zhijie/data/mirflickr_Query.txt', model.device, inference_fn, 256, dname='mirflickr', log_dir=args.log_dir, random_runs=args.random_runs)
-    retrieval(args.coco_dir, args.coco_db_path, args.coco_query_path, model.device, inference_fn, 256, log_dir=args.log_dir, random_runs=args.random_runs)
+    retrieval(args.nuswide_dir, '/home/zhijie/data/nuswide_m_DB.txt', '/home/zhijie/data/nuswide_m_Query.txt', model.device, inference_fn, 256, dname='nuswide_m', log_dir=args.log_dir, random_runs=args.random_runs, pca=args.pca)
+    retrieval(args.voc2012_dir, '/home/zhijie/data/voc2012_DB.txt', '/home/zhijie/data/voc2012_Query.txt', model.device, inference_fn, 256, dname='voc2012', log_dir=args.log_dir, random_runs=args.random_runs, pca=args.pca)
+    retrieval(args.mirflickr_dir, '/home/zhijie/data/mirflickr_DB.txt', '/home/zhijie/data/mirflickr_Query.txt', model.device, inference_fn, 256, dname='mirflickr', log_dir=args.log_dir, random_runs=args.random_runs, pca=args.pca)
+    retrieval(args.coco_dir, args.coco_db_path, args.coco_query_path, model.device, inference_fn, 256, log_dir=args.log_dir, random_runs=args.random_runs, pca=args.pca)
     # retrieval(args.data, '/home/zhijie/data/imagenet_DB.txt', '/home/zhijie/data/imagenet_Query.txt', model.device, inference_fn, 256, dname='imagenet', log_dir=args.log_dir, random_runs=args.random_runs)
 
 if __name__ == '__main__':
