@@ -78,6 +78,10 @@ parser.add_argument('--gpu', default=None, type=int,
 parser.add_argument('--scale-loss', default=1, type=float,
                     metavar='S', help='scale the loss')
 
+# for vis
+parser.add_argument('--vis_eigenfunctions_activations', default=False, action='store_true')
+parser.add_argument('--vis_eigenfunctions_activations_via_opt', default=False, action='store_true')
+
 def main():
     args = parser.parse_args()
 
@@ -152,6 +156,96 @@ def main_worker(gpu, args):
     loader = torch.utils.data.DataLoader(
         dataset, batch_size=per_device_batch_size, num_workers=args.workers,
         pin_memory=True, sampler=sampler)
+
+    if args.vis_eigenfunctions_activations_via_opt:
+        import matplotlib.pyplot as plt
+        from kornia.filters import gaussian_blur2d
+
+        assert args.resume is not None
+        assert args.world_size == 1
+
+        model.eval()
+        raw_image = torch.randn(10, 3, 224, 224).cuda()
+        raw_image.requires_grad_(True)
+
+        iter_n = 5000
+        optimizer = torch.optim.Adam([raw_image], lr=0.1) #, weight_decay=1e-6)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, iter_n)#, eta_min=1e-4)
+
+        start_sigma, end_sigma = 4, 2
+        
+        for j in range(0, iter_n):
+            sigma = start_sigma + ((end_sigma - start_sigma) * j) / iter_n
+            processed_image = gaussian_blur2d(raw_image.sigmoid(), (7, 7), (sigma, sigma))
+            processed_image = processed_image.sub(
+                torch.Tensor([[0.485, 0.456, 0.406]]).view(3, 1, 1).cuda()).div(
+                    torch.Tensor([[0.229, 0.224, 0.225]]).view(3, 1, 1).cuda())
+            
+            output = model.module.projector(model.module.backbone(processed_image))
+            loss = -sum(output[i, i] for i in range(output.shape[0]))
+            print('Iteration:', str(j), 'Loss:', "{0:.2f}".format(loss.data.cpu().numpy()))
+            
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+        
+        processed_image = gaussian_blur2d(raw_image.sigmoid(), (7, 7), (end_sigma, end_sigma))
+        processed_image *= 255
+        processed_image = processed_image.permute(0, 2, 3, 1).data.cpu().numpy().astype(np.uint8)
+        
+        fig, axs = plt.subplots(1, 10, figsize=(4*10, 4))  # Adjust the figure size as needed
+        for i in range(10):
+            img = Image.fromarray(processed_image[i])
+            axs[i].imshow(img)
+            axs[i].axis('off')
+        fig.tight_layout()
+        fig.savefig('vis_efs2.pdf')
+        return
+
+    if args.vis_eigenfunctions_activations:
+        import matplotlib.pyplot as plt
+        import matplotlib.image as mpimg
+
+        assert args.resume is not None
+        assert args.world_size == 1
+        val_dataset = torchvision.datasets.ImageFolder(os.path.join(args.data, 'val'), transforms.Compose([
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225]),
+            ]))
+        random_indices = torch.randperm(len(val_dataset))
+        val_dataset = torch.utils.data.Subset(val_dataset, random_indices[:50000])
+
+        kwargs = dict(batch_size=args.batch_size // args.world_size, num_workers=args.workers, pin_memory=True, shuffle=False)
+        val_loader = torch.utils.data.DataLoader(val_dataset, **kwargs)
+
+        model.eval()
+        eigenmaps = []
+        # with torch.cuda.amp.autocast():
+        with torch.no_grad():
+            for images, _ in val_loader:
+                eigenmaps.append(model.module.projector(model.module.backbone(images.cuda(gpu, non_blocking=True))))
+                # if len(eigenmaps) == 500:
+                #     break
+        eigenmaps = torch.cat(eigenmaps, 0)
+        print(eigenmaps.shape)
+
+        transform = transforms.Compose([transforms.Resize(256), transforms.CenterCrop(224)])
+        fig, axs = plt.subplots(20, 10, figsize=(4*10, 4*20))  # Adjust the figure size as needed
+        for i in range(20):
+            indices = eigenmaps[:, i].argsort(descending=True)[:10]
+            img_list = [val_dataset.dataset.samples[val_dataset.indices[j]] for j in indices]
+            for j, img_path in enumerate(img_list):
+                # print(img_path)
+                img = transform(Image.open(img_path[0]))
+                axs[i, j].imshow(img)
+                axs[i, j].axis('off')
+        fig.tight_layout()
+        fig.savefig('vis_efs.pdf')
+        return
 
     if args.rank == 0:
         writer = SummaryWriter(log_dir = args.log_dir)

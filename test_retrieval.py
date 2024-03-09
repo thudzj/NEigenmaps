@@ -37,7 +37,7 @@ parser.add_argument('--checkpoint-dir', type=str, default='./logs/',
 parser.add_argument('--log-dir', type=str, default='./logs/',
                     metavar='DIR', help='path to log directory')
 parser.add_argument('--mode', type=str, default="baseline",
-                    choices=["neuralef", "spectral"],
+                    choices=["neuralef", "spectral", "mrl"],
                     help="project type")
 parser.add_argument('--name', type=str, default='default')
 parser.add_argument('--resume', type=str, default=None)
@@ -112,6 +112,14 @@ def main_worker(gpu, args):
         model = NeuralEFCLR(args).cuda(gpu)
     elif args.mode == 'spectral':
         model = SpectralCLR(args).cuda(gpu)
+    elif args.mode == 'mrl':
+        model = torchvision.models.resnet50(False)
+        NESTING_LIST=[2**i for i in range(3, 12)]
+        model.fc = MultiHeadNestedLinear(NESTING_LIST)
+        apply_blurpool(model)	
+        model.load_state_dict(get_ckpt(args.resume)) # Since our models have a torch DDP wrapper, we modify keys to exclude first 7 chars. 
+        model.fc = nn.Identity()
+        model = model.cuda(gpu)
     else:
         assert False
 
@@ -119,7 +127,7 @@ def main_worker(gpu, args):
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[gpu])
 
     # automatically resume from checkpoint if it exists
-    if args.resume is not None:
+    if args.mode != 'mrl' and args.resume is not None:
         if args.resume == 'auto':
             if os.path.exists(os.path.join(args.checkpoint_dir, 'checkpoint.pth')):
                 args.resume = os.path.join(args.checkpoint_dir, 'checkpoint.pth')
@@ -137,12 +145,16 @@ def main_worker(gpu, args):
             pin_memory=True, sampler=None, shuffle=True)
         model.module.estimate_output_norm(loader)
 
-    inference_fn = partial(model.module.inference, normalize=args.normalize)
+    if args.mode != 'mrl':
+        inference_fn = partial(model.module.inference, normalize=args.normalize)
+    else:
+        inference_fn = model.module.forward
+    retrieval(args.data, '/home/zhijie/data/imagenet_DB.txt', '/home/zhijie/data/imagenet_Query.txt', model.device, inference_fn, 256, dname='imagenet', log_dir=args.log_dir, random_runs=args.random_runs)
     retrieval(args.nuswide_dir, '/home/zhijie/data/nuswide_m_DB.txt', '/home/zhijie/data/nuswide_m_Query.txt', model.device, inference_fn, 256, dname='nuswide_m', log_dir=args.log_dir, random_runs=args.random_runs, pca=args.pca)
     retrieval(args.voc2012_dir, '/home/zhijie/data/voc2012_DB.txt', '/home/zhijie/data/voc2012_Query.txt', model.device, inference_fn, 256, dname='voc2012', log_dir=args.log_dir, random_runs=args.random_runs, pca=args.pca)
     retrieval(args.mirflickr_dir, '/home/zhijie/data/mirflickr_DB.txt', '/home/zhijie/data/mirflickr_Query.txt', model.device, inference_fn, 256, dname='mirflickr', log_dir=args.log_dir, random_runs=args.random_runs, pca=args.pca)
     retrieval(args.coco_dir, args.coco_db_path, args.coco_query_path, model.device, inference_fn, 256, log_dir=args.log_dir, random_runs=args.random_runs, pca=args.pca)
-    # retrieval(args.data, '/home/zhijie/data/imagenet_DB.txt', '/home/zhijie/data/imagenet_Query.txt', model.device, inference_fn, 256, dname='imagenet', log_dir=args.log_dir, random_runs=args.random_runs)
+    
 
 if __name__ == '__main__':
     main()

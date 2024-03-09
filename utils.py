@@ -17,6 +17,8 @@ from classy_vision.generic.distributed_util import (
 from torch import optim
 import torchvision.transforms as transforms
 from PIL import Image, ImageOps, ImageFilter
+from typing import Type, Any, Callable, Union, List, Optional
+import numpy as np
 
 
 class GatherLayer(torch.autograd.Function):
@@ -264,3 +266,120 @@ def adjust_learning_rate(args, optimizer, loader, step, end_lr=None):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     return lr
+
+def preprocess_image(pil_im, resize_im=True):
+    """
+        Processes image for CNNs
+
+    Args:
+        PIL_img (PIL_img): PIL Image or numpy array to process
+        resize_im (bool): Resize to 224 or not
+    returns:
+        im_as_var (torch variable): Variable that contains processed float tensor
+    """
+    import numpy as np
+    # Mean and std list for channels (Imagenet)
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+
+    # Ensure or transform incoming image to PIL image
+    if type(pil_im) != Image.Image:
+        try:
+            pil_im = Image.fromarray(pil_im)
+        except Exception as e:
+            print("could not transform PIL_img to a PIL Image object. Please check input.")
+
+    # Resize image
+    if resize_im:
+        pil_im = pil_im.resize((224, 224), Image.ANTIALIAS)
+
+    im_as_arr = np.float32(pil_im)
+    im_as_arr = im_as_arr.transpose(2, 0, 1)  # Convert array to D,W,H
+    # Normalize the channels
+    for channel, _ in enumerate(im_as_arr):
+        im_as_arr[channel] /= 255
+        im_as_arr[channel] -= mean[channel]
+        im_as_arr[channel] /= std[channel]
+    # Convert to float tensor
+    im_as_ten = torch.from_numpy(im_as_arr).float().cuda()
+    # Add one more channel to the beginning. Tensor shape = 1,3,224,224
+    im_as_ten.unsqueeze_(0)
+    # Convert to Pytorch variable
+    im_as_ten.requires_grad_(True)
+    return im_as_ten
+
+
+def recreate_image(im_as_var):
+    """
+        Recreates images from a torch variable, sort of reverse preprocessing
+    Args:
+        im_as_var (torch variable): Image to recreate
+    returns:
+        recreated_im (numpy arr): Recreated image in array
+    """
+    import numpy as np
+    import copy
+    reverse_mean = [-0.485, -0.456, -0.406]
+    reverse_std = [1/0.229, 1/0.224, 1/0.225]
+    recreated_im = copy.copy(im_as_var.cpu().data.numpy()[0])
+    for c in range(3):
+        recreated_im[c] /= reverse_std[c]
+        recreated_im[c] -= reverse_mean[c]
+    recreated_im[recreated_im > 1] = 1
+    recreated_im[recreated_im < 0] = 0
+    recreated_im = np.round(recreated_im * 255)
+
+    recreated_im = np.uint8(recreated_im).transpose(1, 2, 0)
+    return recreated_im
+
+def blur(img, sigma):
+    import scipy.ndimage as nd
+    if sigma > 0:
+        img[0] = nd.filters.gaussian_filter(img[0], sigma, order=0)
+        img[1] = nd.filters.gaussian_filter(img[1], sigma, order=0)
+        img[2] = nd.filters.gaussian_filter(img[2], sigma, order=0)
+    return img
+
+class MultiHeadNestedLinear(torch.nn.Module):
+	"""
+	Class for MRL model.
+	"""
+	def __init__(self, nesting_list: List, num_classes=1000, **kwargs):
+		super(MultiHeadNestedLinear, self).__init__()
+		self.nesting_list=nesting_list
+		self.num_classes=num_classes # Number of classes for classification
+		for i, num_feat in enumerate(self.nesting_list):
+			setattr(self, f"nesting_classifier_{i}", torch.nn.Linear(num_feat, self.num_classes, **kwargs))
+
+	def forward(self, x):
+		nesting_logits = ()
+		for i, num_feat in enumerate(self.nesting_list):
+			nesting_logits +=  (getattr(self, f"nesting_classifier_{i}")(x[:, :num_feat]),)
+		return nesting_logits
+    
+class BlurPoolConv2d(torch.nn.Module):
+	def __init__(self, conv):
+		super().__init__()
+		default_filter = torch.tensor([[[[1, 2, 1], [2, 4, 2], [1, 2, 1]]]]) / 16.0
+		filt = default_filter.repeat(conv.in_channels, 1, 1, 1)
+		self.conv = conv
+		self.register_buffer('blur_filter', filt)
+
+	def forward(self, x):
+		blurred = torch.nn.functional.conv2d(x, self.blur_filter, stride=1, padding=(1, 1),
+						   groups=self.conv.in_channels, bias=None)
+		return self.conv.forward(blurred)
+
+def apply_blurpool(mod: torch.nn.Module):
+	for (name, child) in mod.named_children():
+		if isinstance(child, torch.nn.Conv2d) and (np.max(child.stride) > 1 and child.in_channels >= 16):
+			setattr(mod, name, BlurPoolConv2d(child))
+		else: apply_blurpool(child)
+          
+def get_ckpt(path):
+	ckpt=path
+	ckpt = torch.load(ckpt, map_location='cpu')
+	plain_ckpt={}
+	for k in ckpt.keys():
+		plain_ckpt[k[7:]] = ckpt[k] # remove the 'module' portion of key if model is Pytorch DDP
+	return plain_ckpt
