@@ -59,6 +59,9 @@ parser.add_argument('--no_stop_grad', default=False, action='store_true')
 parser.add_argument('--l2_normalize', default=False, action='store_true')
 parser.add_argument('--not_all_together', default=False, action='store_true')
 parser.add_argument('--positive_def', default=False, action='store_true')
+parser.add_argument('--corrector', default=0, type=float)
+parser.add_argument('--momentum', default=0.99, type=float)
+parser.add_argument('--adaptive_weighting', default=False, action='store_true')
 
 # Dist
 parser.add_argument('--world-size', default=1, type=int,
@@ -85,12 +88,16 @@ parser.add_argument('--vis_eigenfunctions_activations_via_opt', default=False, a
 def main():
     args = parser.parse_args()
 
-    if os.path.exists('/data/LargeData/Large/ImageNet'):
-        args.data = '/data/LargeData/Large/ImageNet'
+    if os.path.exists('/data1/LargeData/Large/ImageNet'):
+        args.data = '/data1/LargeData/Large/ImageNet'
     elif os.path.exists('/home/LargeData/Large/ImageNet'):
         args.data = '/home/LargeData/Large/ImageNet'
     elif os.path.exists('/workspace/home/zhijie/ImageNet'):
         args.data = '/workspace/home/zhijie/ImageNet'
+    elif os.path.exists('/home/data/ImageNet'):
+        args.data = '/home/data/ImageNet'
+    elif os.path.exists('/data/LargeData/Large/ImageNet'):
+        args.data = '/data/LargeData/Large/ImageNet'
 
     args.proj_bn = not args.no_proj_bn
     args.ngpus_per_node = torch.cuda.device_count()
@@ -289,6 +296,10 @@ def main_worker(gpu, args):
                     writer.add_scalar('Loss/cls_loss', cls_loss.item(), step)
                     writer.add_scalar('Accuracy/train', acc.item(), step)
                     writer.add_scalar('Hparams/lr', lr, step)
+            
+            if step % (args.print_freq * 50) == 0 and args.rank == 0 and args.mode == 'neuralef':
+                print("eigenvalues", model.module.eigenvalues.data.cpu().numpy()[:10], model.module.eigenvalues.data.cpu().numpy()[-10:])
+                print("eigennorm_sqr", model.module.eigennorm_sqr.data.cpu().numpy()[:10], model.module.eigennorm_sqr.data.cpu().numpy()[-10:])
 
         if args.rank == 0 and epoch % 10 == 9:
             # save checkpoint
@@ -394,6 +405,11 @@ class NeuralEFCLR(nn.Module):
         if args.rank == 0 and hasattr(self, 'projector'):
             print(self.projector)
 
+        self.momentum = args.momentum
+        self.register_buffer('eigennorm_sqr', torch.zeros(args.proj_dim[-1]))
+        self.register_buffer('eigenvalues', torch.zeros(args.proj_dim[-1]))
+        self.register_buffer('num_calls', torch.Tensor([0]))
+
     def forward(self, y1, y2, labels=None):
         if self.args.not_all_together:
             r1 = self.backbone(y1)
@@ -407,6 +423,20 @@ class NeuralEFCLR(nn.Module):
 
         psi1 = gather_from_all(z1)
         psi2 = gather_from_all(z2)
+
+        if self.training:
+            with torch.no_grad():
+                norm_ = (psi1.norm(dim=0) ** 2 + psi2.norm(dim=0) ** 2) / (psi1.shape[0] + psi2.shape[0])
+                eigenvalues_ = ((psi1 / norm_) * (psi2 / norm_)).mean(0)
+                if self.num_calls == 0:
+                    self.eigennorm_sqr.copy_(norm_.data)
+                    self.eigenvalues.copy_(eigenvalues_.data)
+                else:
+                    self.eigennorm_sqr.mul_(self.momentum).add_(
+                        norm_.data, alpha = 1-self.momentum)
+                    self.eigenvalues.mul_(self.momentum).add_(
+                        eigenvalues_.data, alpha = 1-self.momentum)
+                self.num_calls += 1
 
         if self.args.l2_normalize:
             psi1 = F.normalize(psi1, dim=1) * math.sqrt(self.args.t)
@@ -433,17 +463,24 @@ class NeuralEFCLR(nn.Module):
             loss = - psi_K_psi_diag.sum()
             reg = ((psi_K_psi) ** 2).triu(1).sum()
         else:
-            psi_K_psi_diag = (psi1 * psi2).sum(0).view(-1, 1)
+            correct_term = 0 if self.args.corrector == 0 else self.args.corrector * ((psi1 ** 2).sum(0) + (psi2 ** 2).sum(0)).view(-1, 1) / 2.
+            psi_K_psi_diag = (psi1 * psi2).sum(0).view(-1, 1) * (1 - self.args.corrector) + correct_term
             if self.args.no_stop_grad:
                 psi2_d_K_psi1 = psi2.T @ psi1
                 psi1_d_K_psi2 = psi1.T @ psi2
             else:
-                psi2_d_K_psi1 = psi2.detach().T @ psi1
-                psi1_d_K_psi2 = psi1.detach().T @ psi2
+                correct_term = 0 if self.args.corrector == 0 else self.args.corrector * (psi1.detach().T @ psi1 + psi2.detach().T @ psi2) / 2.
+                psi2_d_K_psi1 = psi2.detach().T @ psi1 * (1 - self.args.corrector) + correct_term
+                psi1_d_K_psi2 = psi1.detach().T @ psi2 * (1 - self.args.corrector) + correct_term
 
-            loss = - psi_K_psi_diag.sum() * 2
-            reg = ((psi2_d_K_psi1) ** 2).triu(1).sum() \
-                + ((psi1_d_K_psi2) ** 2).triu(1).sum()
+            if not self.args.adaptive_weighting:
+                loss = - psi_K_psi_diag.sum() * 2
+                reg = ((psi2_d_K_psi1) ** 2).triu(1).sum() \
+                    + ((psi1_d_K_psi2) ** 2).triu(1).sum()
+            else:
+                loss = - psi_K_psi_diag.sum() * 2
+                reg = ((psi2_d_K_psi1) ** 2 / psi_K_psi_diag.detach().abs().clamp_(min=1e-6)).triu(1).sum() \
+                    + ((psi1_d_K_psi2) ** 2 / psi_K_psi_diag.detach().abs().clamp_(min=1e-6)).triu(1).sum()
 
         loss /= psi_K_psi_diag.numel()
         reg /= psi_K_psi_diag.numel()
@@ -483,16 +520,19 @@ class NeuralEFCLR(nn.Module):
             if early_stop is not None and step == early_stop:
                 break
 
-        output_norm = (output_norm/num_all_data).sqrt()
+        output_norm = (output_norm/num_all_data)
         R_diag /= num_data
-        self.register_buffer('output_norm', output_norm)
-        self.register_buffer('R_diag_sqrt', R_diag.clamp(min=0).sqrt())
+        self.eigennorm_sqr.copy_(output_norm.data)
+        self.eigenvalues.copy_(R_diag.data)
 
     @torch.no_grad()
-    def inference(self, y, normalize=False):
+    def inference(self, y, normalize=None):
         z = self.projector(self.backbone(y))
-        if normalize:
-            return z / self.output_norm
+        if normalize is not None:
+            if normalize == 'full':
+                return z / self.eigennorm_sqr.sqrt() * self.eigenvalues.clamp(0).sqrt()
+            else:
+                return z / self.eigennorm_sqr.sqrt()
         else:
             return z
 

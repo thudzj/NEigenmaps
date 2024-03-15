@@ -11,7 +11,7 @@ import timm
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset
 from PIL import Image
-import kornia.augmentation as Kg
+# import kornia.augmentation as Kg
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 from collections import OrderedDict
 
@@ -130,11 +130,7 @@ def DoRetrieval(device, net, log_dir, Img_dir, Gallery_dir, Query_dir, NB_CLS, T
         ]))
     Query_loader = T.utils.data.DataLoader(Query_set, batch_size=batch_size, num_workers=4)
 
-    dataset = torchvision.datasets.ImageFolder(os.path.join('/home/LargeData/Large/ImageNet', 'train'), Transform(None))
-    loader = T.utils.data.DataLoader(
-        dataset, batch_size=1024, num_workers=16,
-        pin_memory=True, sampler=None)
-
+    
     # q_img = Query_set[234][0]
     # q_img = q_img.mul(T.tensor([0.229, 0.224, 0.225]).view(-1, 1, 1)).add(T.tensor([0.485, 0.456, 0.406]).view(-1, 1, 1))
     # print(q_img.min(), q_img.max())
@@ -149,6 +145,10 @@ def DoRetrieval(device, net, log_dir, Img_dir, Gallery_dir, Query_dir, NB_CLS, T
     # return
 
     if pca:
+        dataset = torchvision.datasets.ImageFolder(os.path.join('/home/data/ImageNet', 'train'), Transform(None))
+        loader = T.utils.data.DataLoader(
+            dataset, batch_size=1024, num_workers=16,
+            pin_memory=True, sampler=None)
         with T.no_grad():
             cov_ = 0
             cnt = 0

@@ -45,16 +45,17 @@ parser.add_argument('--model', type=str, default='resnet50')
 
 parser.add_argument('--proj_dim', default=[4096, 4096], type=int, nargs='+')
 parser.add_argument('--no_proj_bn', default=False, action='store_true')
+parser.add_argument('--momentum', default=0.99, type=float)
 
-parser.add_argument('--coco_dir', default='/home/zhijie/data/train2014', type=str)
-parser.add_argument('--coco_db_path', default='/home/zhijie/data/coco_DB.txt', type=str)
-parser.add_argument('--coco_query_path', default='/home/zhijie/data/coco_Query.txt', type=str)
-parser.add_argument('--nuswide_dir', default='/home/zhijie/data/nuswide_images', type=str)
-parser.add_argument('--voc2012_dir', default='/home/zhijie/data/', type=str)
-parser.add_argument('--mirflickr_dir', default='/home/zhijie/data/mirflickr', type=str)
+parser.add_argument('--coco_dir', default='../data/train2014', type=str)
+parser.add_argument('--coco_db_path', default='../data/coco_DB.txt', type=str)
+parser.add_argument('--coco_query_path', default='../data/coco_Query.txt', type=str)
+parser.add_argument('--nuswide_dir', default='../data/nuswide_images', type=str)
+parser.add_argument('--voc2012_dir', default='../data/', type=str)
+parser.add_argument('--mirflickr_dir', default='../data/mirflickr', type=str)
 
 parser.add_argument('--random_runs', default=None, type=int)
-parser.add_argument('--normalize', default=False, action='store_true')
+parser.add_argument('--normalize', default=None, type=str)
 parser.add_argument('--pca', default=False, action='store_true')
 
 # Dist
@@ -80,6 +81,10 @@ def main():
         args.data = '/home/LargeData/Large/ImageNet'
     elif os.path.exists('/workspace/home/zhijie/ImageNet'):
         args.data = '/workspace/home/zhijie/ImageNet'
+    elif os.path.exists('/home/data/ImageNet'):
+        args.data = '/home/data/ImageNet'
+    elif os.path.exists('/data/LargeData/Large/ImageNet'):
+        args.data = '/data/LargeData/Large/ImageNet'
 
     args.proj_bn = not args.no_proj_bn
     args.ngpus_per_node = torch.cuda.device_count()
@@ -134,25 +139,25 @@ def main_worker(gpu, args):
             else:
                 assert False
         ckpt = torch.load(args.resume, map_location='cpu')
-        model.load_state_dict(ckpt['model'])
+        model.load_state_dict(ckpt['model'], strict=False)
 
     model.eval()
 
-    if args.mode == 'neuralef' and args.normalize:
+    if args.mode == 'neuralef' and args.normalize is not None and model.module.num_calls == 0:
         dataset = torchvision.datasets.ImageFolder(os.path.join(args.data, 'train'), Transform(args))
         loader = torch.utils.data.DataLoader(
             dataset, batch_size=1024, num_workers=args.workers,
             pin_memory=True, sampler=None, shuffle=True)
-        model.module.estimate_output_norm(loader)
+        model.module.estimate_output_norm(loader, early_stop=None)
 
     if args.mode != 'mrl':
         inference_fn = partial(model.module.inference, normalize=args.normalize)
     else:
         inference_fn = model.module.forward
-    retrieval(args.data, '/home/zhijie/data/imagenet_DB.txt', '/home/zhijie/data/imagenet_Query.txt', model.device, inference_fn, 256, dname='imagenet', log_dir=args.log_dir, random_runs=args.random_runs)
-    retrieval(args.nuswide_dir, '/home/zhijie/data/nuswide_m_DB.txt', '/home/zhijie/data/nuswide_m_Query.txt', model.device, inference_fn, 256, dname='nuswide_m', log_dir=args.log_dir, random_runs=args.random_runs, pca=args.pca)
-    retrieval(args.voc2012_dir, '/home/zhijie/data/voc2012_DB.txt', '/home/zhijie/data/voc2012_Query.txt', model.device, inference_fn, 256, dname='voc2012', log_dir=args.log_dir, random_runs=args.random_runs, pca=args.pca)
-    retrieval(args.mirflickr_dir, '/home/zhijie/data/mirflickr_DB.txt', '/home/zhijie/data/mirflickr_Query.txt', model.device, inference_fn, 256, dname='mirflickr', log_dir=args.log_dir, random_runs=args.random_runs, pca=args.pca)
+    # retrieval(args.data, '../data/imagenet_DB.txt', '../data/imagenet_Query.txt', model.device, inference_fn, 256, dname='imagenet', log_dir=args.log_dir, random_runs=args.random_runs)
+    retrieval(args.nuswide_dir, '../data/nuswide_m_DB.txt', '../data/nuswide_m_Query.txt', model.device, inference_fn, 256, dname='nuswide_m', log_dir=args.log_dir, random_runs=args.random_runs, pca=args.pca)
+    retrieval(args.voc2012_dir, '../data/voc2012_DB.txt', '../data/voc2012_Query.txt', model.device, inference_fn, 256, dname='voc2012', log_dir=args.log_dir, random_runs=args.random_runs, pca=args.pca)
+    retrieval(args.mirflickr_dir, '../data/mirflickr_DB.txt', '../data/mirflickr_Query.txt', model.device, inference_fn, 256, dname='mirflickr', log_dir=args.log_dir, random_runs=args.random_runs, pca=args.pca)
     retrieval(args.coco_dir, args.coco_db_path, args.coco_query_path, model.device, inference_fn, 256, log_dir=args.log_dir, random_runs=args.random_runs, pca=args.pca)
     
 
