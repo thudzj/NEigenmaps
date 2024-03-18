@@ -427,7 +427,7 @@ class NeuralEFCLR(nn.Module):
         if self.training:
             with torch.no_grad():
                 norm_ = (psi1.norm(dim=0) ** 2 + psi2.norm(dim=0) ** 2) / (psi1.shape[0] + psi2.shape[0])
-                eigenvalues_ = ((psi1 / norm_) * (psi2 / norm_)).mean(0)
+                eigenvalues_ = ((psi1 / norm_.sqrt()) * (psi2 / norm_.sqrt())).mean(0)
                 if self.num_calls == 0:
                     self.eigennorm_sqr.copy_(norm_.data)
                     self.eigenvalues.copy_(eigenvalues_.data)
